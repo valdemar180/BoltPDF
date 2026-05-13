@@ -1,5 +1,6 @@
 import React from 'react';
 
+// Contrato individual de propriedades do card aceitando ações de clique dinâmicas
 interface ToolCardProps {
   title: string;
   description: string;
@@ -7,7 +8,10 @@ interface ToolCardProps {
   colorClass: string;
   bgIconClass: string;
   iconPath: string;
-  buttonStylesClass: string; // Nova propriedade técnica injetada diretamente pela origem dos dados
+  buttonStylesClass: string;
+  isActive: boolean;
+  isDisabled: boolean;
+  onClick?: () => void; // Ação opcional dependendo do card ativo
 }
 
 const ToolCard: React.FC<ToolCardProps> = ({ 
@@ -17,12 +21,20 @@ const ToolCard: React.FC<ToolCardProps> = ({
   colorClass, 
   bgIconClass, 
   iconPath,
-  buttonStylesClass
+  buttonStylesClass,
+  isActive,
+  isDisabled,
+  onClick
 }) => {
   return (
-    <div className="bg-surface/40 border border-gray-800 rounded-2xl p-5 flex flex-col justify-between items-start hover:border-gray-700 transition-all duration-300">
+    <div className={`bg-surface/40 border rounded-2xl p-5 flex flex-col justify-between items-start transition-all duration-500 h-full
+      ${isActive 
+        ? 'border-neonCyan shadow-[0_0_25px_rgba(0,240,255,0.25)] scale-[1.02] bg-[#151D30]' 
+        : isDisabled 
+          ? 'border-gray-900 opacity-30 pointer-events-none' 
+          : 'border-gray-800 hover:border-gray-700 hover:shadow-lg'}`}
+    >
       <div className="w-full">
-        {/* Ícone customizado (xmlns corrigido) */}
         <div className={`p-3 rounded-xl mb-4 w-fit flex items-center justify-center ${bgIconClass}`}>
           <svg xmlns="w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-5 h-5 ${colorClass}`}>
             <path strokeLinecap="round" strokeLinejoin="round" d={iconPath} />
@@ -33,14 +45,38 @@ const ToolCard: React.FC<ToolCardProps> = ({
         <p className="text-xs text-gray-400 leading-relaxed mb-6">{description}</p>
       </div>
 
-      <button className={`w-full py-2 px-4 rounded-xl text-xs font-semibold border bg-transparent transition-all duration-300 ${buttonStylesClass}`}>
-        {btnText}
+      <button 
+        onClick={onClick}
+        disabled={isDisabled}
+        className={`w-full py-2 px-4 rounded-xl text-xs font-semibold border bg-transparent transition-all duration-300 cursor-pointer
+          ${isActive 
+            ? 'bg-neonCyan text-[#0B0F19] font-black border-neonCyan shadow-[0_0_15px_rgba(0,240,255,0.4)] hover:scale-[1.02]' 
+            : buttonStylesClass}`}
+      >
+        {isActive ? "Processar Ação" : btnText}
       </button>
     </div>
   );
 };
 
-export const ToolsGrid: React.FC = () => {
+// Contrato global da grade declarando rigidamente todas as funções mapeadas no App.tsx
+interface ToolsGridProps {
+  currentFile: File | null;
+  onConvert: () => void;
+  onSplit: () => void; // ISSO RESOLVE O ERRO DO APP.TSX
+  isProcessing: boolean;
+}
+
+export const ToolsGrid: React.FC<ToolsGridProps> = ({
+  currentFile,
+  onConvert,
+  onSplit,
+  isProcessing
+}) => {
+  // Verificadores dinâmicos de tipo armazenados em memória RAM
+  const isImage = currentFile ? ['image/png', 'image/jpeg', 'image/jpg'].includes(currentFile.type) : false;
+  const isPdf = currentFile ? currentFile.type === 'application/pdf' : false;
+
   const tools = [
     {
       id: "converter",
@@ -50,7 +86,10 @@ export const ToolsGrid: React.FC = () => {
       colorClass: "text-orange-400",
       bgIconClass: "bg-orange-500/10 border border-orange-500/20",
       buttonStylesClass: "border-orange-500/30 text-orange-400 hover:bg-orange-500/10 hover:shadow-[0_0_15px_rgba(251,146,60,0.2)]",
-      iconPath: "M7.5 7.5h-.75A2.25 2.25 0 0 0 4.5 9.75v7.5a2.25 2.25 0 0 0 2.25 2.25h7.5a2.25 2.25 0 0 0 2.25-2.25v-.75m-6 3.75m-3-3l3 3m0 0l3-3m-3 3V1.5m6 7.5h.75a2.25 2.25 0 0 1 2.25 2.25v7.5a2.25 2.25 0 0 1-2.25 2.25h-7.5a2.25 2.25 0 0 1-2.25-2.25v-.75"
+      iconPath: "M7.5 7.5h-.75A2.25 2.25 0 0 0 4.5 9.75v7.5a2.25 2.25 0 0 0 2.25 2.25h7.5a2.25 2.25 0 0 0 2.25-2.25v-.75m-6 3.75m-3-3l3 3m0 0l3-3m-3 3V1.5m6 7.5h.75a2.25 2.25 0 0 1 2.25 2.25v7.5a2.25 2.25 0 0 1-2.25 2.25h-7.5a2.25 2.25 0 0 1-2.25-2.25v-.75",
+      isActive: isImage && !isProcessing,
+      isDisabled: (currentFile !== null && !isImage) || isProcessing,
+      onClick: onConvert
     },
     {
       id: "mesclar",
@@ -60,7 +99,9 @@ export const ToolsGrid: React.FC = () => {
       colorClass: "text-neonCyan",
       bgIconClass: "bg-neonCyan/10 border border-neonCyan/20",
       buttonStylesClass: "border-neonCyan/30 text-neonCyan hover:bg-neonCyan/10 hover:shadow-[0_0_15px_rgba(0,240,255,0.2)]",
-      iconPath: "M12 4.5v15m7.5-7.5h-15"
+      iconPath: "M12 4.5v15m7.5-7.5h-15",
+      isActive: false,
+      isDisabled: (currentFile !== null && !isPdf) || isProcessing
     },
     {
       id: "editar",
@@ -70,7 +111,9 @@ export const ToolsGrid: React.FC = () => {
       colorClass: "text-green-400",
       bgIconClass: "bg-green-500/10 border border-green-500/20",
       buttonStylesClass: "border-green-500/30 text-green-400 hover:bg-green-500/10 hover:shadow-[0_0_15px_rgba(74,222,128,0.2)]",
-      iconPath: "m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125"
+      iconPath: "m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125",
+      isActive: false,
+      isDisabled: (currentFile !== null && !isPdf) || isProcessing
     },
     {
       id: "dividir",
@@ -80,17 +123,22 @@ export const ToolsGrid: React.FC = () => {
       colorClass: "text-purple-400",
       bgIconClass: "bg-purple-500/10 border border-purple-500/20",
       buttonStylesClass: "border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:shadow-[0_0_15px_rgba(192,132,252,0.2)]",
-      iconPath: "M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"
+      iconPath: "M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75",
+      isActive: isPdf && !isProcessing, 
+      isDisabled: (currentFile !== null && !isPdf) || isProcessing,
+      onClick: onSplit // Ativa o clique do botão Dividir
     },
     {
       id: "assinar",
       title: "Assinar Documento",
-      description: "Adicionar assinaturas eletrônicas seguras, válidas e vinculativas aos seus PDFs.",
+      description: "Adicionar signatures eletrônicas seguras, válidas e vinculativas aos seus PDFs.",
       btnText: "Assinar Agora",
       colorClass: "text-pink-400",
       bgIconClass: "bg-pink-500/10 border border-pink-500/20",
       buttonStylesClass: "border-pink-500/30 text-pink-400 hover:bg-pink-500/10 hover:shadow-[0_0_15px_rgba(244,114,182,0.2)]",
-      iconPath: "M16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.5 13.5"
+      iconPath: "M16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.5 13.5",
+      isActive: false,
+      isDisabled: (currentFile !== null && !isPdf) || isProcessing
     }
   ];
 
