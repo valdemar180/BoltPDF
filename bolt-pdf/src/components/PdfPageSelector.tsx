@@ -18,29 +18,38 @@ export const PdfPageSelector: React.FC<PdfPageSelectorProps> = ({
   onCancel,
   isProcessing
 }) => {
-  // Estado local para rastrear quais números de páginas estão marcados
   const [selectedPages, setSelectedPages] = useState<number[]>([]);
 
-  // Alterna a seleção da página ao clicar no card ou no checkbox
   const togglePageSelection = (pageNumber: number) => {
+    if (isProcessing) return;
     setSelectedPages(prev =>
       prev.includes(pageNumber)
         ? prev.filter(num => num !== pageNumber)
-        : [...prev, pageNumber].sort((a, b) => a - b)
+        : [...prev, pageNumber]
     );
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>, pageNumber: number) => {
+    if (isProcessing) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      togglePageSelection(pageNumber);
+    }
+  };
+
   const handleSelectAll = () => {
+    if (isProcessing) return;
     if (selectedPages.length === pages.length) {
-      setSelectedPages([]); // Desmarca tudo
-    } else {
-      setSelectedPages(pages.map(p => p.pageNumber)); // Marca tudo
+      setSelectedPages([]);
+    } else { // CORREÇÃO AQUI: Bloco 'else' adicionado corretamente
+      setSelectedPages(pages.map(p => p.pageNumber));
     }
   };
 
   const handleSubmit = () => {
-    if (selectedPages.length === 0) return;
-    onProcessDivision(selectedPages);
+    if (selectedPages.length === 0 || isProcessing) return;
+    const sortedPages = [...selectedPages].sort((a, b) => a - b);
+    onProcessDivision(sortedPages);
   };
 
   return (
@@ -56,14 +65,18 @@ export const PdfPageSelector: React.FC<PdfPageSelectorProps> = ({
         
         <div className="flex items-center gap-3 w-full sm:w-auto">
           <button
+            type="button"
             onClick={handleSelectAll}
-            className="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-xl border border-gray-700 text-gray-300 hover:border-gray-500 hover:bg-surface/20 transition-all duration-200 cursor-pointer"
+            disabled={isProcessing}
+            className="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-xl border border-gray-700 text-gray-300 hover:border-gray-500 hover:bg-surface/20 transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none"
           >
             {selectedPages.length === pages.length ? 'Desmarcar Todas' : 'Selecionar Todas'}
           </button>
           <button
+            type="button"
             onClick={onCancel}
-            className="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-xl border border-red-900/40 text-red-400 hover:bg-red-950/20 transition-all duration-200 cursor-pointer"
+            disabled={isProcessing}
+            className="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-xl border border-red-900/40 text-red-400 hover:bg-red-950/20 transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none"
           >
             Cancelar
           </button>
@@ -78,7 +91,13 @@ export const PdfPageSelector: React.FC<PdfPageSelectorProps> = ({
             <div
               key={page.pageNumber}
               onClick={() => togglePageSelection(page.pageNumber)}
-              className={`relative bg-[#151D30]/60 border rounded-xl p-3 flex flex-col items-center cursor-pointer transition-all duration-300 group
+              onKeyDown={(e) => handleKeyDown(e, page.pageNumber)}
+              role="checkbox"
+              aria-checked={isChecked}
+              aria-disabled={isProcessing}
+              tabIndex={isProcessing ? -1 : 0}
+              className={`relative bg-[#151D30]/60 border rounded-xl p-3 flex flex-col items-center cursor-pointer transition-all duration-300 group focus:outline-none focus:ring-2 focus:ring-neonCyan
+                ${isProcessing ? 'cursor-not-allowed opacity-60' : ''}
                 ${isChecked 
                   ? 'border-neonCyan bg-[#151D30] shadow-[0_0_15px_rgba(0,240,255,0.15)] scale-[1.02]' 
                   : 'border-gray-800 hover:border-gray-600'}`}
@@ -102,7 +121,7 @@ export const PdfPageSelector: React.FC<PdfPageSelectorProps> = ({
               <div className="w-full aspect-[3/4] rounded-lg overflow-hidden border border-gray-900 bg-[#0B0F19] flex items-center justify-center relative mb-3">
                 <img
                   src={page.dataUrl}
-                  alt={`Página ${page.pageNumber}`}
+                  alt={`Miniatura da Página ${page.pageNumber}`}
                   className="w-full h-full object-contain select-none"
                   loading="lazy"
                 />
@@ -122,11 +141,12 @@ export const PdfPageSelector: React.FC<PdfPageSelectorProps> = ({
       {/* Botão de Execução Final */}
       <div className="w-full flex justify-center pb-12">
         <button
+          type="button"
           onClick={handleSubmit}
           disabled={selectedPages.length === 0 || isProcessing}
-          className={`w-full max-w-md py-3 px-6 rounded-xl font-bold text-sm uppercase tracking-widest border transition-all duration-300 shadow-lg cursor-pointer
+          className={`w-full max-w-md py-3 px-6 rounded-xl font-bold text-sm uppercase tracking-widest border transition-all duration-300 shadow-lg
             ${selectedPages.length > 0 && !isProcessing
-              ? 'bg-neonCyan border-neonCyan text-[#0B0F19] shadow-[0_0_20px_rgba(0,240,255,0.3)] hover:scale-[1.01]'
+              ? 'bg-neonCyan border-neonCyan text-[#0B0F19] shadow-[0_0_20px_rgba(0,240,255,0.3)] hover:scale-[1.01] cursor-pointer'
               : 'bg-gray-900 border-gray-800 text-gray-600 pointer-events-none'}`}
         >
           {isProcessing ? 'Processando Divisão Local...' : `Dividir e Baixar (${selectedPages.length}) Páginas`}

@@ -1,6 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Configura o worker client-side injetando a URL buildada diretamente da dependência instalada
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cloudflare.com{pdfjsLib.version}/pdf.worker.min.js`;
+// Estratégia nativa estável para o Vite acoplar o worker diretamente nos assets locais (100% offline)
+import pdfWorkerURL from 'pdfjs-dist/build/pdf.worker.mjs?url';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
 export { pdfjsLib };

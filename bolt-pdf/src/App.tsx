@@ -19,8 +19,16 @@ function App() {
   const { executeImageToPdf, isProcessing: isConverting, converterError } = useImageConverter();
   const { pages, isRendering, renderError, renderPdfPages, clearRenderedPages } = usePdfRenderer();
 
-  // Recebe arquivos vindos da DropZone de forma defensiva
-  const handleFileLoaded = useCallback((file: File) => {
+  // Tratamento defensivo preparado para receber File ou null (remoção)
+  const handleFileLoaded = useCallback((file: File | null) => {
+    if (!file) {
+      setCurrentFile(null);
+      setAppError(null);
+      setActiveTool(null);
+      clearRenderedPages();
+      return;
+    }
+
     const MAX_FILE_SIZE_BYTES = 30 * 1024 * 1024;
     
     if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -53,8 +61,13 @@ function App() {
   // Motor utilitário client-side para extrair páginas usando pdf-lib na RAM
   const handleProcessDivision = useCallback(async (selectedPageNumbers: number[]) => {
     if (!currentFile) return;
+    
+    // Captura estática do nome antes de entrar na stack assíncrona para evitar race conditions
+    const safeFileName = currentFile.name; 
     setIsSplitting(true);
     setAppError(null);
+
+    let url: string | null = null;
 
     try {
       const arrayBuffer = await currentFile.arrayBuffer();
@@ -68,18 +81,19 @@ function App() {
       copiedPages.forEach((page) => newPdf.addPage(page));
 
       const pdfBytes = await newPdf.save();
-      const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
+      
+      // SOLUÇÃO DE COMPILAÇÃO DEFINITIVA: Instanciação limpa compatível com as tipagens de ecossistemas DOM
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+      url = URL.createObjectURL(blob);
 
       const link = document.createElement('a');
       link.href = url;
-      const baseName = currentFile.name.substring(0, currentFile.name.lastIndexOf('.')) || currentFile.name;
+      const baseName = safeFileName.substring(0, safeFileName.lastIndexOf('.')) || safeFileName;
       link.download = `${baseName}_dividido.pdf`;
       document.body.appendChild(link);
       link.click();
 
       document.body.removeChild(link);
-      URL.revokeObjectURL(url);
       
       // Limpeza completa de estado após a conclusão do download
       setCurrentFile(null);
@@ -89,6 +103,10 @@ function App() {
       setAppError('Falha crítica de engenharia ao fatiar as páginas do PDF.');
       console.error(err);
     } finally {
+      // Garantia de Liberação de Memória no encerramento (sucesso ou falha)
+      if (url) {
+        URL.revokeObjectURL(url);
+      }
       setIsSplitting(false);
     }
   }, [currentFile, clearRenderedPages]);

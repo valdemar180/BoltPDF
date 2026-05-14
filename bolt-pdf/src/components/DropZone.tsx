@@ -1,9 +1,8 @@
 import React, { useRef } from 'react';
 import { useFileHandler } from '../hooks/useFileHandler';
 
-// Interface injetada para sincronizar perfeitamente com os estados do App.tsx
 interface DropZoneProps {
-  onFileAccepted: (file: File) => void;
+  onFileAccepted: (file: File | null) => void; // Tipagem segura corrigida
   currentFile: File | null;
   error: string | null;
   isProcessing: boolean;
@@ -15,16 +14,16 @@ export const DropZone: React.FC<DropZoneProps> = ({
   error,
   isProcessing
 }) => {
-  // Reutilizamos apenas os estados visuais e comportamentais de arrastar do seu hook
   const { isDragging, handleDragOver, handleDragLeave } = useFileHandler();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const triggerFileSelect = () => {
-    if (isProcessing) return; // Trava cliques durante o processamento de conversão
+    if (isProcessing) return;
     fileInputRef.current?.click();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isProcessing) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       triggerFileSelect();
@@ -37,46 +36,48 @@ export const DropZone: React.FC<DropZoneProps> = ({
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     handleDragLeave();
     if (isProcessing) return;
     processFiles(e.dataTransfer.files);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    processFiles(e.target.files);
+  const handleDragOverInterception = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault(); // Garante o comportamento nativo de drop ativo
+    handleDragOver(e);
   };
 
   return (
     <div className="w-full max-w-2xl mx-auto px-4">
       <div
-        onDragOver={handleDragOver}
+        onDragOver={handleDragOverInterception}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={triggerFileSelect}
         onKeyDown={handleKeyDown}
         role="button"
-        tabIndex={0}
+        tabIndex={isProcessing ? -1 : 0}
+        aria-disabled={isProcessing}
         aria-label="Zona de upload de arquivos para processamento"
         className={`w-full h-80 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center p-8 text-center cursor-pointer transition-all duration-300 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-neonCyan
+          ${isProcessing ? 'cursor-not-allowed opacity-80' : ''}
           ${isDragging 
             ? 'border-neonCyan bg-neonCyan/5 shadow-neon-hover scale-[1.01]' 
             : 'border-gray-700 bg-surface/30 hover:border-gray-500 hover:shadow-neon-cyan'}`}
       >
-        {/* Input atualizado para aceitar PDFs e Imagens para os motores de conversão */}
         <input 
           type="file" 
           ref={fileInputRef} 
-          onChange={handleFileChange} 
+          onChange={(e) => processFiles(e.target.files)} 
           accept=".pdf, image/png, image/jpeg, image/jpg" 
           className="hidden" 
           data-testid="file-input"
+          disabled={isProcessing}
         />
 
         {isProcessing ? (
           <div className="flex flex-col items-center">
-            {/* Spinner animado com as cores neon do projeto */}
             <div className="w-12 h-12 border-4 border-neonCyan border-t-transparent rounded-full animate-spin mb-4 shadow-neon-cyan" />
             <h3 className="text-md font-semibold text-neonCyan tracking-wide animate-pulse">PROCESSANDO CONVERSÃO...</h3>
             <p className="text-xs text-gray-500 mt-1">Gerando seu arquivo PDF puramente no navegador</p>
@@ -101,7 +102,8 @@ export const DropZone: React.FC<DropZoneProps> = ({
             <h3 className="text-md font-medium text-white mb-1 truncate max-w-md">{currentFile.name}</h3>
             <p className="text-xs text-gray-400 font-mono mb-4">{(currentFile.size / (1024 * 1024)).toFixed(2)} MB</p>
             <button 
-              onClick={(e) => { e.stopPropagation(); onFileAccepted(null as unknown as File); }}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onFileAccepted(null); }}
               className="text-xs text-red-400 hover:text-red-300 transition-colors underline focus:outline-none"
             >
               Remover arquivo

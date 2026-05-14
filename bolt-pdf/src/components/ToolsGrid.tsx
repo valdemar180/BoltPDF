@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 
-// Contrato individual de propriedades do card aceitando ações de clique dinâmicas
 interface ToolCardProps {
   title: string;
   description: string;
@@ -11,7 +10,7 @@ interface ToolCardProps {
   buttonStylesClass: string;
   isActive: boolean;
   isDisabled: boolean;
-  onClick?: () => void; // Ação opcional dependendo do card ativo
+  onClick?: () => void;
 }
 
 const ToolCard: React.FC<ToolCardProps> = ({ 
@@ -27,16 +26,18 @@ const ToolCard: React.FC<ToolCardProps> = ({
   onClick
 }) => {
   return (
-    <div className={`bg-surface/40 border rounded-2xl p-5 flex flex-col justify-between items-start transition-all duration-500 h-full
-      ${isActive 
-        ? 'border-neonCyan shadow-[0_0_25px_rgba(0,240,255,0.25)] scale-[1.02] bg-[#151D30]' 
-        : isDisabled 
-          ? 'border-gray-900 opacity-30 pointer-events-none' 
-          : 'border-gray-800 hover:border-gray-700 hover:shadow-lg'}`}
+    <div 
+      className={`bg-surface/40 border rounded-2xl p-5 flex flex-col justify-between items-start transition-all duration-500 h-full
+        ${isActive 
+          ? 'border-neonCyan shadow-[0_0_25px_rgba(0,240,255,0.25)] scale-[1.02] bg-[#151D30]' 
+          : isDisabled 
+            ? 'border-gray-900 opacity-30 select-none' 
+            : 'border-gray-800 hover:border-gray-700 hover:shadow-lg'}`}
+      aria-disabled={isDisabled}
     >
       <div className="w-full">
         <div className={`p-3 rounded-xl mb-4 w-fit flex items-center justify-center ${bgIconClass}`}>
-          <svg xmlns="w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-5 h-5 ${colorClass}`}>
+          <svg xmlns="w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d={iconPath} />
           </svg>
         </div>
@@ -46,12 +47,16 @@ const ToolCard: React.FC<ToolCardProps> = ({
       </div>
 
       <button 
+        type="button"
         onClick={onClick}
         disabled={isDisabled}
-        className={`w-full py-2 px-4 rounded-xl text-xs font-semibold border bg-transparent transition-all duration-300 cursor-pointer
+        tabIndex={isDisabled ? -1 : 0}
+        className={`w-full py-2 px-4 rounded-xl text-xs font-semibold border bg-transparent transition-all duration-300 disabled:cursor-not-allowed
           ${isActive 
-            ? 'bg-neonCyan text-[#0B0F19] font-black border-neonCyan shadow-[0_0_15px_rgba(0,240,255,0.4)] hover:scale-[1.02]' 
-            : buttonStylesClass}`}
+            ? 'bg-neonCyan text-[#0B0F19] font-black border-neonCyan shadow-[0_0_15px_rgba(0,240,255,0.4)] hover:scale-[1.02] cursor-pointer' 
+            : isDisabled
+              ? 'border-gray-800 text-gray-600 pointer-events-none'
+              : `cursor-pointer ${buttonStylesClass}`}`}
       >
         {isActive ? "Processar Ação" : btnText}
       </button>
@@ -59,11 +64,10 @@ const ToolCard: React.FC<ToolCardProps> = ({
   );
 };
 
-// Contrato global da grade declarando rigidamente todas as funções mapeadas no App.tsx
 interface ToolsGridProps {
   currentFile: File | null;
   onConvert: () => void;
-  onSplit: () => void; // ISSO RESOLVE O ERRO DO APP.TSX
+  onSplit: () => void;
   isProcessing: boolean;
 }
 
@@ -73,11 +77,11 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
   onSplit,
   isProcessing
 }) => {
-  // Verificadores dinâmicos de tipo armazenados em memória RAM
   const isImage = currentFile ? ['image/png', 'image/jpeg', 'image/jpg'].includes(currentFile.type) : false;
   const isPdf = currentFile ? currentFile.type === 'application/pdf' : false;
 
-  const tools = [
+  // Memoização do array para evitar realocação de memória RAM a cada renderização
+  const tools = useMemo(() => [
     {
       id: "converter",
       title: "Converter PDF",
@@ -126,12 +130,12 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
       iconPath: "M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75",
       isActive: isPdf && !isProcessing, 
       isDisabled: (currentFile !== null && !isPdf) || isProcessing,
-      onClick: onSplit // Ativa o clique do botão Dividir
+      onClick: onSplit
     },
     {
       id: "assinar",
       title: "Assinar Documento",
-      description: "Adicionar signatures eletrônicas seguras, válidas e vinculativas aos seus PDFs.",
+      description: "Adicionar assinaturas eletrônicas seguras, válidas e vinculativas aos seus PDFs.",
       btnText: "Assinar Agora",
       colorClass: "text-pink-400",
       bgIconClass: "bg-pink-500/10 border border-pink-500/20",
@@ -140,15 +144,16 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
       isActive: false,
       isDisabled: (currentFile !== null && !isPdf) || isProcessing
     }
-  ];
+  ], [currentFile, isImage, isPdf, isProcessing, onConvert, onSplit]);
 
   return (
-    <section className="w-full max-w-6xl mx-auto px-4 mt-16 mb-20">
-      <h3 className="text-center text-xl font-extrabold text-white mb-8 tracking-wide">
+    <section className="w-full max-w-6xl mx-auto px-4 mt-16 mb-20" aria-labelledby="tools-title">
+      <h3 id="tools-title" className="text-center text-xl font-extrabold text-white mb-8 tracking-wide">
         Nossas Ferramentas PDF Poderosas
       </h3>
       
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      {/* Ajuste responsivo de grid para evitar esmagamento de texto */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {tools.map((tool) => (
           <ToolCard key={tool.id} {...tool} />
         ))}
