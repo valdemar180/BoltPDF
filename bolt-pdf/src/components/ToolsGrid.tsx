@@ -37,7 +37,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
     >
       <div className="w-full">
         <div className={`p-3 rounded-xl mb-4 w-fit flex items-center justify-center ${bgIconClass}`}>
-          <svg xmlns="w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5" aria-hidden="true">
+          <svg xmlns="http://w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d={iconPath} />
           </svg>
         </div>
@@ -68,6 +68,8 @@ interface ToolsGridProps {
   currentFile: File | null;
   onConvert: () => void;
   onSplit: () => void;
+  onMerge: () => void;
+  onEdit: () => void; // Adicionado contrato obrigatório no TypeScript
   isProcessing: boolean;
 }
 
@@ -75,6 +77,8 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
   currentFile,
   onConvert,
   onSplit,
+  onMerge,
+  onEdit, // Captura do novo método injetado pelo pai
   isProcessing
 }) => {
   const isImage = currentFile ? ['image/png', 'image/jpeg', 'image/jpg'].includes(currentFile.type) : false;
@@ -104,8 +108,9 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
       bgIconClass: "bg-neonCyan/10 border border-neonCyan/20",
       buttonStylesClass: "border-neonCyan/30 text-neonCyan hover:bg-neonCyan/10 hover:shadow-[0_0_15px_rgba(0,240,255,0.2)]",
       iconPath: "M12 4.5v15m7.5-7.5h-15",
-      isActive: false,
-      isDisabled: (currentFile !== null && !isPdf) || isProcessing
+      isActive: isPdf && !isProcessing,
+      isDisabled: (currentFile !== null && !isPdf) || isProcessing,
+      onClick: onMerge
     },
     {
       id: "editar",
@@ -116,8 +121,9 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
       bgIconClass: "bg-green-500/10 border border-green-500/20",
       buttonStylesClass: "border-green-500/30 text-green-400 hover:bg-green-500/10 hover:shadow-[0_0_15px_rgba(74,222,128,0.2)]",
       iconPath: "m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125",
-      isActive: false,
-      isDisabled: (currentFile !== null && !isPdf) || isProcessing
+      isActive: isPdf && !isProcessing, // Ativa e destaca o card se houver um arquivo PDF na tela
+      isDisabled: (currentFile !== null && !isPdf) || isProcessing,
+      onClick: onEdit // Conectado com sucesso ao fluxo isolado
     },
     {
       id: "dividir",
@@ -144,7 +150,7 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
       isActive: false,
       isDisabled: (currentFile !== null && !isPdf) || isProcessing
     }
-  ], [currentFile, isImage, isPdf, isProcessing, onConvert, onSplit]);
+  ], [currentFile, isImage, isPdf, isProcessing, onConvert, onSplit, onMerge, onEdit]);
 
   return (
     <section className="w-full max-w-6xl mx-auto px-4 mt-16 mb-20" aria-labelledby="tools-title">
@@ -152,7 +158,6 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
         Nossas Ferramentas PDF Poderosas
       </h3>
       
-      {/* Ajuste responsivo de grid para evitar esmagamento de texto */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {tools.map((tool) => (
           <ToolCard key={tool.id} {...tool} />

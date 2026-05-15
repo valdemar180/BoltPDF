@@ -3,26 +3,34 @@ import { Header } from './components/Header';
 import { DropZone } from './components/DropZone';
 import { ToolsGrid } from './components/ToolsGrid';
 import { PdfPageSelector } from './components/PdfPageSelector';
+import { FileQueueList } from './components/FileQueueList'; 
+import { PdfEditorManager } from './components/PdfEditorManager'; // Importação do arquivo separado
 import { useImageConverter } from './hooks/useImageConverter';
 import { usePdfRenderer } from './hooks/usePdfRenderer';
+import { useToolValidation } from './hooks/useToolValidation'; 
 import { PDFDocument } from 'pdf-lib';
 
 function App() {
   const [currentFile, setCurrentFile] = useState<File | null>(null);
+  const [mergeFiles, setMergeFiles] = useState<File[]>([]); 
   const [appError, setAppError] = useState<string | null>(null);
   const [isSplitting, setIsSplitting] = useState(false);
-  
-  // Rastreia qual ação o usuário escolheu executar no momento
+  const [isMerging, setIsMerging] = useState(false); 
+  const [isEditing, setIsEditing] = useState(false); // Estado para travar botões em carregamento do editor
   const [activeTool, setActiveTool] = useState<string | null>(null);
 
-  // Instanciação das engines lógicas isoladas
   const { executeImageToPdf, isProcessing: isConverting, converterError } = useImageConverter();
   const { pages, isRendering, renderError, renderPdfPages, clearRenderedPages } = usePdfRenderer();
 
-  // Tratamento defensivo preparado para receber File ou null (remoção)
+  const { validateAction } = useToolValidation({
+    currentFile,
+    onError: setAppError
+  });
+
   const handleFileLoaded = useCallback((file: File | null) => {
     if (!file) {
       setCurrentFile(null);
+      setMergeFiles([]);
       setAppError(null);
       setActiveTool(null);
       clearRenderedPages();
@@ -38,35 +46,109 @@ function App() {
     }
 
     setAppError(null);
-    setActiveTool(null); // Reseta o estado da ferramenta ativa ao subir novo arquivo
+    setActiveTool(null);
     clearRenderedPages();
     setCurrentFile(file);
+    setMergeFiles((prev) => [...prev, file]); 
   }, [clearRenderedPages]);
 
-  // Gatilho disparado pelo botão Converter Agora
-  const handleConvertTrigger = useCallback(async () => {
-    if (!currentFile) return;
-    await executeImageToPdf(currentFile);
+  const handleRemoveFromQueue = useCallback((indexToRemove: number) => {
+    setMergeFiles((prev) => {
+      const updated = prev.filter((_, index) => index !== indexToRemove);
+      if (updated.length === 0) {
+        setCurrentFile(null);
+      } else {
+        setCurrentFile(updated[updated.length - 1]);
+      }
+      return updated;
+    });
+  }, []);
+
+  const handleClearQueue = useCallback(() => {
+    setMergeFiles([]);
     setCurrentFile(null);
-    setActiveTool(null);
-  }, [currentFile, executeImageToPdf]);
+    setAppError(null);
+  }, []);
 
-  // Gatilho disparado pelo botão Dividir Arquivos: Inicia a renderização assíncrona sob demanda
-  const handleSplitSetupTrigger = useCallback(async () => {
-    if (!currentFile) return;
-    setActiveTool('dividir');
-    await renderPdfPages(currentFile);
-  }, [currentFile, renderPdfPages]);
+  const handleConvertTrigger = useCallback(() => {
+    validateAction("Converter PDF", async () => {
+      await executeImageToPdf(currentFile!);
+      setCurrentFile(null);
+      setMergeFiles([]);
+      setActiveTool(null);
+    });
+  }, [currentFile, executeImageToPdf, validateAction]);
 
-  // Motor utilitário client-side para extrair páginas usando pdf-lib na RAM
+  const handleSplitSetupTrigger = useCallback(() => {
+    validateAction("Dividir PDF", async () => {
+      setActiveTool('dividir');
+      await renderPdfPages(currentFile!);
+    });
+  }, [currentFile, renderPdfPages, validateAction]);
+
+  // GATILHO DA NOVA FEATURE: Aciona a engine de renderização e chaveia a visualização para o Editor
+  const handleEditSetupTrigger = useCallback(() => {
+    validateAction("Editar PDF", async () => {
+      setActiveTool('editar');
+      setIsEditing(true);
+      await renderPdfPages(currentFile!);
+      setIsEditing(false);
+    });
+  }, [currentFile, renderPdfPages, validateAction]);
+
+  const handleMergeTrigger = useCallback(() => {
+    validateAction("Mesclar PDF", async () => {
+      if (mergeFiles.length < 2) {
+        setAppError("A ferramenta de mesclagem necessita de pelo menos 2 arquivos carregados.");
+        return;
+      }
+
+      setIsMerging(true);
+      setAppError(null);
+      let url: string | null = null;
+
+      try {
+        const mergedPdf = await PDFDocument.create();
+
+        for (const file of mergeFiles) {
+          const arrayBuffer = await file.arrayBuffer();
+          const sourceDoc = await PDFDocument.load(arrayBuffer);
+          const copiedPages = await mergedPdf.copyPages(sourceDoc, sourceDoc.getPageIndices());
+          copiedPages.forEach((page) => mergedPdf.addPage(page));
+        }
+
+        const pdfBytes = await mergedPdf.save();
+        const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+        url = URL.createObjectURL(blob);
+
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'bolt_pdf_mesclado.pdf';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        setCurrentFile(null);
+        setMergeFiles([]);
+        setActiveTool(null);
+      } catch (err) {
+        setAppError('Falha crítica de engenharia ao mesclar os arquivos PDF.');
+        console.error(err);
+      } finally {
+        setIsMerging(false);
+        if (url) {
+          setTimeout(() => URL.revokeObjectURL(url!), 60000);
+        }
+      }
+    });
+  }, [mergeFiles, validateAction]);
+
   const handleProcessDivision = useCallback(async (selectedPageNumbers: number[]) => {
     if (!currentFile) return;
     
-    // Captura estática do nome antes de entrar na stack assíncrona para evitar race conditions
     const safeFileName = currentFile.name; 
     setIsSplitting(true);
     setAppError(null);
-
     let url: string | null = null;
 
     try {
@@ -74,15 +156,11 @@ function App() {
       const sourcePdf = await PDFDocument.load(arrayBuffer);
       const newPdf = await PDFDocument.create();
 
-      // Copia as páginas selecionadas (índice baseado em 0 na pdf-lib)
       const zeroBasedIndices = selectedPageNumbers.map(num => num - 1);
       const copiedPages = await newPdf.copyPages(sourcePdf, zeroBasedIndices);
-      
       copiedPages.forEach((page) => newPdf.addPage(page));
 
       const pdfBytes = await newPdf.save();
-      
-      // SOLUÇÃO DE COMPILAÇÃO DEFINITIVA: Instanciação limpa compatível com as tipagens de ecossistemas DOM
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
       url = URL.createObjectURL(blob);
 
@@ -92,54 +170,48 @@ function App() {
       link.download = `${baseName}_dividido.pdf`;
       document.body.appendChild(link);
       link.click();
-
       document.body.removeChild(link);
       
-      // Limpeza completa de estado após a conclusão do download
       setCurrentFile(null);
+      setMergeFiles([]);
       setActiveTool(null);
       clearRenderedPages();
     } catch (err) {
       setAppError('Falha crítica de engenharia ao fatiar as páginas do PDF.');
       console.error(err);
     } finally {
-      // Garantia de Liberação de Memória no encerramento (sucesso ou falha)
-      if (url) {
-        URL.revokeObjectURL(url);
-      }
       setIsSplitting(false);
+      if (url) {
+        setTimeout(() => URL.revokeObjectURL(url!), 60000);
+      }
     }
   }, [currentFile, clearRenderedPages]);
 
   const handleCancelAction = useCallback(() => {
     setCurrentFile(null);
+    setMergeFiles([]);
     setAppError(null);
     setActiveTool(null);
     clearRenderedPages();
   }, [clearRenderedPages]);
 
-  // Junção das travas de processamento em uma flag global de carregamento
-  const globalProcessing = isConverting || isRendering || isSplitting;
-  
-  // Só exibe a tela de escolha se o modo ativo for dividir e as miniaturas estiverem carregadas na RAM
+  const globalProcessing = isConverting || isRendering || isSplitting || isMerging || isEditing;
   const showSelector = activeTool === 'dividir' && pages.length > 0;
+  const showEditor = activeTool === 'editar' && pages.length > 0;
+  const activeError = appError || converterError || renderError;
 
   return (
     <div className="min-h-screen bg-[#0B0F19] relative flex flex-col items-center justify-start py-24 px-4 overflow-y-auto">
-      {/* Luzes de fundo (Glow Neon) */}
       <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-[#00F0FF]/5 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-[#9437FF]/5 rounded-full blur-[140px] pointer-events-none" />
 
-      {/* Cabeçalho Fixo */}
       <Header />
 
-      {/* Conteúdo Principal Semanticamente Envelopado */}
       <main className="w-full flex flex-col items-center justify-start z-10">
         <h1 className="text-2xl font-black text-white mt-12 mb-6 tracking-wider uppercase text-center">
-          {showSelector ? 'Divisor de Páginas' : 'Arrastar e Soltar'}
+          {showSelector ? 'Divisor de Páginas' : showEditor ? 'Editor de PDF' : 'Arrastar e Soltar'}
         </h1>
 
-        {/* Chaveamento Dinâmico Controlado por Estado */}
         {showSelector ? (
           <PdfPageSelector
             pages={pages}
@@ -147,20 +219,36 @@ function App() {
             onCancel={handleCancelAction}
             isProcessing={isSplitting}
           />
+        ) : showEditor ? (
+          <PdfEditorManager 
+            currentFile={currentFile!}
+            pages={pages.map(page => typeof page === 'string' ? page : (page as any).dataUrl || (page as any).url || '')}
+            onCancel={handleCancelAction}
+            onError={setAppError}
+          />
         ) : (
           <DropZone 
             onFileAccepted={handleFileLoaded} 
             currentFile={currentFile} 
-            error={appError || converterError || renderError}
+            error={activeError}
             isProcessing={globalProcessing}
           />
         )}
 
-        {/* Grade de Ferramentas fixa na base com escuta de gatilhos */}
+        {!showSelector && !showEditor && (
+          <FileQueueList 
+            mergeFiles={mergeFiles}
+            onRemoveFile={handleRemoveFromQueue}
+            onClearQueue={handleClearQueue}
+          />
+        )}
+
         <ToolsGrid 
           currentFile={currentFile} 
           onConvert={handleConvertTrigger}
           onSplit={handleSplitSetupTrigger}
+          onMerge={handleMergeTrigger}
+          onEdit={handleEditSetupTrigger}
           isProcessing={globalProcessing}
         />
       </main>
