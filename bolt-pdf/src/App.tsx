@@ -4,7 +4,7 @@ import { DropZone } from './components/DropZone';
 import { ToolsGrid } from './components/ToolsGrid';
 import { PdfPageSelector } from './components/PdfPageSelector';
 import { FileQueueList } from './components/FileQueueList'; 
-import { PdfEditorManager } from './components/PdfEditorManager'; // Importação do arquivo separado
+import { PdfEditorManager } from './components/PdfEditorManager';
 import { useImageConverter } from './hooks/useImageConverter';
 import { usePdfRenderer } from './hooks/usePdfRenderer';
 import { useToolValidation } from './hooks/useToolValidation'; 
@@ -16,7 +16,7 @@ function App() {
   const [appError, setAppError] = useState<string | null>(null);
   const [isSplitting, setIsSplitting] = useState(false);
   const [isMerging, setIsMerging] = useState(false); 
-  const [isEditing, setIsEditing] = useState(false); // Estado para travar botões em carregamento do editor
+  const [isEditing, setIsEditing] = useState(false); 
   const [activeTool, setActiveTool] = useState<string | null>(null);
 
   const { executeImageToPdf, isProcessing: isConverting, converterError } = useImageConverter();
@@ -86,10 +86,19 @@ function App() {
     });
   }, [currentFile, renderPdfPages, validateAction]);
 
-  // GATILHO DA NOVA FEATURE: Aciona a engine de renderização e chaveia a visualização para o Editor
   const handleEditSetupTrigger = useCallback(() => {
     validateAction("Editar PDF", async () => {
       setActiveTool('editar');
+      setIsEditing(true);
+      await renderPdfPages(currentFile!);
+      setIsEditing(false);
+    });
+  }, [currentFile, renderPdfPages, validateAction]);
+
+  // GATILHO DA FEATURE DE ASSINATURA: Reutiliza o motor do Editor de forma transparente
+  const handleSignSetupTrigger = useCallback(() => {
+    validateAction("Assinar Documento", async () => {
+      setActiveTool('editar'); 
       setIsEditing(true);
       await renderPdfPages(currentFile!);
       setIsEditing(false);
@@ -220,35 +229,36 @@ function App() {
             isProcessing={isSplitting}
           />
         ) : showEditor ? (
-          <PdfEditorManager 
+          <PdfEditorManager
             currentFile={currentFile!}
             pages={pages.map(page => typeof page === 'string' ? page : (page as any).dataUrl || (page as any).url || '')}
             onCancel={handleCancelAction}
             onError={setAppError}
           />
         ) : (
-          <DropZone 
-            onFileAccepted={handleFileLoaded} 
-            currentFile={currentFile} 
+          <DropZone
+            onFileAccepted={handleFileLoaded}
+            currentFile={currentFile}
             error={activeError}
             isProcessing={globalProcessing}
           />
         )}
 
         {!showSelector && !showEditor && (
-          <FileQueueList 
+          <FileQueueList
             mergeFiles={mergeFiles}
             onRemoveFile={handleRemoveFromQueue}
             onClearQueue={handleClearQueue}
           />
         )}
 
-        <ToolsGrid 
-          currentFile={currentFile} 
+        <ToolsGrid
+          currentFile={currentFile}
           onConvert={handleConvertTrigger}
           onSplit={handleSplitSetupTrigger}
           onMerge={handleMergeTrigger}
           onEdit={handleEditSetupTrigger}
+          onSign={handleSignSetupTrigger} // Acoplamento limpo do novo gatilho
           isProcessing={globalProcessing}
         />
       </main>

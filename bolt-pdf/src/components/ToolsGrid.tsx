@@ -64,12 +64,14 @@ const ToolCard: React.FC<ToolCardProps> = ({
   );
 };
 
+// 1. Contrato da interface atualizado com a nova feature obrigatória
 interface ToolsGridProps {
   currentFile: File | null;
   onConvert: () => void;
   onSplit: () => void;
   onMerge: () => void;
-  onEdit: () => void; // Adicionado contrato obrigatório no TypeScript
+  onEdit: () => void; 
+  onSign: () => void; // Adicionado assinatura de tipo necessária para o App.tsx
   isProcessing: boolean;
 }
 
@@ -78,13 +80,14 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
   onConvert,
   onSplit,
   onMerge,
-  onEdit, // Captura do novo método injetado pelo pai
+  onEdit,
+  onSign, // Captura da propriedade injetada
   isProcessing
 }) => {
   const isImage = currentFile ? ['image/png', 'image/jpeg', 'image/jpg'].includes(currentFile.type) : false;
   const isPdf = currentFile ? currentFile.type === 'application/pdf' : false;
 
-  // Memoização do array para evitar realocação de memória RAM a cada renderização
+  // Array de ferramentas memoizado com dependências estritas
   const tools = useMemo(() => [
     {
       id: "converter",
@@ -121,9 +124,9 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
       bgIconClass: "bg-green-500/10 border border-green-500/20",
       buttonStylesClass: "border-green-500/30 text-green-400 hover:bg-green-500/10 hover:shadow-[0_0_15px_rgba(74,222,128,0.2)]",
       iconPath: "m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125",
-      isActive: isPdf && !isProcessing, // Ativa e destaca o card se houver um arquivo PDF na tela
+      isActive: isPdf && !isProcessing, 
       isDisabled: (currentFile !== null && !isPdf) || isProcessing,
-      onClick: onEdit // Conectado com sucesso ao fluxo isolado
+      onClick: onEdit 
     },
     {
       id: "dividir",
@@ -147,10 +150,13 @@ export const ToolsGrid: React.FC<ToolsGridProps> = ({
       bgIconClass: "bg-pink-500/10 border border-pink-500/20",
       buttonStylesClass: "border-pink-500/30 text-pink-400 hover:bg-pink-500/10 hover:shadow-[0_0_15px_rgba(244,114,182,0.2)]",
       iconPath: "M16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.5 13.5",
-      isActive: false,
-      isDisabled: (currentFile !== null && !isPdf) || isProcessing
+      // 2. Modificado para reagir dinamicamente ao upload do PDF e liberar o clique de ação
+      isActive: isPdf && !isProcessing,
+      isDisabled: (currentFile !== null && !isPdf) || isProcessing,
+      // 3. Vinculado ao callback de disparo da view do editor
+      onClick: onSign
     }
-  ], [currentFile, isImage, isPdf, isProcessing, onConvert, onSplit, onMerge, onEdit]);
+  ], [currentFile, isImage, isPdf, isProcessing, onConvert, onSplit, onMerge, onEdit, onSign]); // Dependência onSign adicionada para integridade do memo
 
   return (
     <section className="w-full max-w-6xl mx-auto px-4 mt-16 mb-20" aria-labelledby="tools-title">

@@ -1,38 +1,58 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
 import { usePdfEditorStyle } from '../hooks/usePdfEditorStyle';
 import { TextToolbar } from './TextToolbar';
+import { SignatureModal } from './SignatureModal'; 
 
-interface TextAnnotation {
-  text: string;
-  xPercentage: number; 
+interface BaseAnnotation {
+  id: string;
+  xPercentage: number;
   yPercentage: number;
   pageIndex: number;
+  widthPercentage?: number; 
+}
+
+interface TextAnnotation extends BaseAnnotation {
+  type: 'text';
+  text: string;
   fontSize: number;
   fontFamily: string;
   isBold: boolean;
   isItalic: boolean;
 }
 
+interface ImageAnnotation extends BaseAnnotation {
+  type: 'image';
+  base64Png: string;
+  rotation?: number; 
+}
+
+type Annotation = TextAnnotation | ImageAnnotation;
+
 interface PdfEditorManagerProps {
   currentFile: File;
-  pages: string[]; 
+  pages: string[];
   onCancel: () => void;
   onError: (msg: string) => void;
 }
 
 export function PdfEditorManager({ currentFile, pages, onCancel, onError }: PdfEditorManagerProps) {
   const [isSaving, setIsSaving] = useState(false);
-  const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [activeAnnotationIdx, setActiveAnnotationIdx] = useState<number | null>(null);
   const [zoomScale, setZoomScale] = useState<number>(100);
+  const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
 
-  const { editorStyle, updateFontSize, updateFontFamily, toggleBold, toggleItalic } = usePdfEditorStyle();
+  const { editorStyle } = usePdfEditorStyle();
 
   const [isDragging, setIsDragging] = useState(false);
-  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [isRotating, setIsRotating] = useState(false);
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+
   const dragStartPos = useRef({ x: 0, y: 0 });
   const dragStartPercent = useRef({ x: 0, y: 0 });
+  const rotationStartAngle = useRef<number>(0);
+  const rotationInitialBaseAngle = useRef<number>(0);
 
   const containerRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
   const canvasRefs = useRef<{ [key: number]: HTMLCanvasElement | null }>({});
@@ -73,15 +93,16 @@ export function PdfEditorManager({ currentFile, pages, onCancel, onError }: PdfE
     };
 
     renderSharpPages();
-  }, [currentFile, zoomScale]);
+  }, [currentFile, zoomScale]); 
 
-  // FUNÇÃO DO NOVO BOTÃO: Cria o texto centralizado na página ativa
   const handleAddTextClick = () => {
     const newAnnotation: TextAnnotation = {
+      id: `text_${Date.now()}`,
+      type: 'text',
       text: '',
-      xPercentage: 35, // Posiciona centralizado horizontalmente no início
-      yPercentage: 20, // Posiciona um pouco abaixo do topo
-      pageIndex: 0,    // Adiciona na primeira página padrão
+      xPercentage: 35,
+      yPercentage: 20,
+      pageIndex: 0,
       fontSize: editorStyle.fontSize,
       fontFamily: editorStyle.fontFamily,
       isBold: editorStyle.isBold,
@@ -89,47 +110,127 @@ export function PdfEditorManager({ currentFile, pages, onCancel, onError }: PdfE
     };
 
     setAnnotations((prev) => [...prev, newAnnotation]);
-    setActiveAnnotationIdx(annotations.length); 
+    setActiveAnnotationIdx(annotations.length);
+  };
+
+  const handleSignatureExtracted = (base64Png: string) => {
+    const newSignature: ImageAnnotation = {
+      id: `img_${Date.now()}`,
+      type: 'image',
+      base64Png,
+      xPercentage: 40,
+      yPercentage: 45,
+      pageIndex: 0,
+      widthPercentage: 20, 
+      rotation: 0         
+    };
+
+    setAnnotations((prev) => [...prev, newSignature]);
+    setActiveAnnotationIdx(annotations.length);
   };
 
   const handleDragStart = (e: React.MouseEvent, idx: number) => {
     e.stopPropagation();
     setIsDragging(true);
-    setDraggedIdx(idx);
+    setActiveIdx(idx);
     setActiveAnnotationIdx(idx);
-    dragStartPos.current = { x: e.clientX, y: e.clientY };
-    dragStartPercent.current = { x: annotations[idx].xPercentage, y: annotations[idx].yPercentage };
+    
+    const container = containerRefs.current[annotations[idx].pageIndex];
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const currentScale = zoomScale / 100;
+
+    dragStartPos.current = { 
+      x: (e.clientX - rect.left) / currentScale, 
+      y: (e.clientY - rect.top) / currentScale 
+    };
+    dragStartPercent.current = { 
+      x: annotations[idx].xPercentage, 
+      y: annotations[idx].yPercentage 
+    };
+  };
+
+  const handleRotationStart = (e: React.MouseEvent, idx: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setIsRotating(true);
+    setActiveIdx(idx);
+    setActiveAnnotationIdx(idx);
+
+    const container = containerRefs.current[annotations[idx].pageIndex];
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const currentScale = zoomScale / 100;
+
+    const ann = annotations[idx];
+    const actualWidth = rect.width / currentScale;
+    const actualHeight = rect.height / currentScale;
+    
+    const centerX = (ann.xPercentage / 100) * actualWidth;
+    const centerY = (ann.yPercentage / 100) * actualHeight;
+
+    const mouseX = (e.clientX - rect.left) / currentScale;
+    const mouseY = (e.clientY - rect.top) / currentScale;
+
+    rotationStartAngle.current = Math.atan2(mouseY - centerY, mouseX - centerX);
+    rotationInitialBaseAngle.current = ann.type === 'image' ? (ann.rotation || 0) : 0;
   };
 
   const handlePageMove = (e: React.MouseEvent, pageIndex: number) => {
-    if (!isDragging || draggedIdx === null || annotations[draggedIdx].pageIndex !== pageIndex) return;
+    if (activeIdx === null || annotations[activeIdx].pageIndex !== pageIndex) return;
 
     const container = containerRefs.current[pageIndex];
     if (!container) return;
 
     const rect = container.getBoundingClientRect();
-    
-    const deltaX = e.clientX - dragStartPos.current.x;
-    const deltaY = e.clientY - dragStartPos.current.y;
+    const currentScale = zoomScale / 100;
 
-    const deltaXPercent = (deltaX / rect.width) * 100;
-    const deltaYPercent = (deltaY / rect.height) * 100;
+    const actualWidth = rect.width / currentScale;
+    const actualHeight = rect.height / currentScale;
 
-    const newX = Math.max(0, Math.min(100, dragStartPercent.current.x + deltaXPercent));
-    const newY = Math.max(0, Math.min(100, dragStartPercent.current.y + deltaYPercent));
+    if (isDragging) {
+      const relativeX = (e.clientX - rect.left) / currentScale;
+      const relativeY = (e.clientY - rect.top) / currentScale;
 
-    setAnnotations((prev) => prev.map((item, i) => i === draggedIdx ? { ...item, xPercentage: newX, yPercentage: newY } : item));
+      const deltaX = relativeX - dragStartPos.current.x;
+      const deltaY = relativeY - dragStartPos.current.y;
+
+      const deltaXPercent = (deltaX / actualWidth) * 100;
+      const deltaYPercent = (deltaY / actualHeight) * 100;
+
+      const newX = Math.max(0, Math.min(100, dragStartPercent.current.x + deltaXPercent));
+      const newY = Math.max(0, Math.min(100, dragStartPercent.current.y + deltaYPercent));
+
+      setAnnotations((prev) => prev.map((item, i) => i === activeIdx ? { ...item, xPercentage: newX, yPercentage: newY } : item));
+    } 
+    else if (isRotating) {
+      const ann = annotations[activeIdx];
+      const centerX = (ann.xPercentage / 100) * actualWidth;
+      const centerY = (ann.yPercentage / 100) * actualHeight;
+
+      const mouseX = (e.clientX - rect.left) / currentScale;
+      const mouseY = (e.clientY - rect.top) / currentScale;
+
+      const currentAngle = Math.atan2(mouseY - centerY, mouseX - centerX);
+      
+      const angleDiff = ((currentAngle - rotationStartAngle.current) * 180) / Math.PI;
+      let finalAngle = Math.round(rotationInitialBaseAngle.current + angleDiff);
+
+      if (finalAngle > 180) finalAngle -= 360;
+      if (finalAngle < -180) finalAngle += 360;
+
+      setAnnotations((prev) => prev.map((item, i) => i === activeIdx && item.type === 'image' ? { ...item, rotation: finalAngle } : item));
+    }
   };
 
-  const handleDragEnd = () => {
-    setTimeout(() => {
-      setIsDragging(false);
-      setDraggedIdx(null);
-    }, 50);
+  const handleInteractionEnd = () => {
+    setIsDragging(false);
+    setIsRotating(false);
+    setActiveIdx(null);
   };
 
   const updateAnnotationText = (idx: number, text: string) => {
-    setAnnotations((prev) => prev.map((item, i) => i === idx ? { ...item, text } : item));
+    setAnnotations((prev) => prev.map((item, i) => i === idx && item.type === 'text' ? { ...item, text } : item));
   };
 
   const removeAnnotation = (idx: number) => {
@@ -150,40 +251,74 @@ export function PdfEditorManager({ currentFile, pages, onCancel, onError }: PdfE
       const pdfPages = pdfDoc.getPages();
 
       for (const ann of annotations) {
-        if (ann.text.trim() === '') continue;
-
         const page = pdfPages[ann.pageIndex];
         if (!page) continue;
 
         const { width, height } = page.getSize();
-        const targetX = (ann.xPercentage / 100) * width;
-        const targetY = height - ((ann.yPercentage / 100) * height) - (ann.fontSize / 1.5); 
+        const targetXRaw = (ann.xPercentage / 100) * width;
+        
+        if (ann.type === 'text') {
+          if (ann.text.trim() === '') continue;
+          const targetY = height - ((ann.yPercentage / 100) * height) - (ann.fontSize / 1.5);
 
-        let fontName = StandardFonts.Helvetica;
-        if (ann.fontFamily === 'Helvetica') {
-          if (ann.isBold && ann.isItalic) fontName = StandardFonts.HelveticaBoldOblique;
-          else if (ann.isBold) fontName = StandardFonts.HelveticaBold;
-          else if (ann.isItalic) fontName = StandardFonts.HelveticaOblique;
-        } else if (ann.fontFamily === 'TimesRoman') {
-          if (ann.isBold && ann.isItalic) fontName = StandardFonts.TimesRomanBoldItalic;
-          else if (ann.isBold) fontName = StandardFonts.TimesRomanBold;
-          else if (ann.isItalic) fontName = StandardFonts.TimesRomanItalic;
-          else fontName = StandardFonts.TimesRoman;
-        } else if (ann.fontFamily === 'Courier') {
-          if (ann.isBold && ann.isItalic) fontName = StandardFonts.CourierBoldOblique;
-          else if (ann.isBold) fontName = StandardFonts.CourierBold;
-          else if (ann.isItalic) fontName = StandardFonts.CourierOblique;
+          let fontName = StandardFonts.Helvetica;
+          if (ann.fontFamily === 'Helvetica') {
+            if (ann.isBold && ann.isItalic) fontName = StandardFonts.HelveticaBoldOblique;
+            else if (ann.isBold) fontName = StandardFonts.HelveticaBold;
+            else if (ann.isItalic) fontName = StandardFonts.HelveticaOblique;
+          } else if (ann.fontFamily === 'TimesRoman') {
+            if (ann.isBold && ann.isItalic) fontName = StandardFonts.TimesRomanBoldItalic;
+            else if (ann.isBold) fontName = StandardFonts.TimesRomanBold;
+            else if (ann.isItalic) fontName = StandardFonts.TimesRomanItalic;
+            else fontName = StandardFonts.TimesRoman;
+          } else if (ann.fontFamily === 'Courier') {
+            if (ann.isBold && ann.isItalic) fontName = StandardFonts.CourierBoldOblique;
+            else if (ann.isBold) fontName = StandardFonts.CourierBold;
+            else if (ann.isItalic) fontName = StandardFonts.CourierOblique;
+          }
+
+          const embeddedFont = await pdfDoc.embedFont(fontName);
+
+          page.drawText(ann.text, {
+            x: targetXRaw,
+            y: targetY,
+            size: ann.fontSize,
+            font: embeddedFont,
+            color: rgb(0, 0, 0),
+          });
+        } 
+        else if (ann.type === 'image') {
+          const embeddedImage = await pdfDoc.embedPng(ann.base64Png);
+          
+          const imgWidth = ((ann.widthPercentage || 20) / 100) * width;
+          const imgHeight = (imgWidth / embeddedImage.width) * embeddedImage.height;
+          
+          let targetX = targetXRaw;
+          
+          // COMPENSAÇÃO DEFINITIVA DO PIXEL HUNTING: 
+          // Ajustado multiplicando e somando uma fração controlada da altura (+ 14 pixels brutos)
+          // Isso anula a folga visual invisível que o CSS injetava e puxa a assinatura para cima da linha pontilhada.
+          let targetY = height - ((ann.yPercentage / 100) * height) - imgHeight + 18;
+
+          const rotDegrees = ann.rotation ? -ann.rotation : 0;
+          const rad = (rotDegrees * Math.PI) / 180;
+
+          if (rotDegrees !== 0) {
+            const cx = targetX + imgWidth / 2;
+            const cy = targetY + imgHeight / 2;
+
+            targetX = cx - (imgWidth / 2) * Math.cos(rad) + (imgHeight / 2) * Math.sin(rad);
+            targetY = cy - (imgWidth / 2) * Math.sin(rad) - (imgHeight / 2) * Math.cos(rad);
+          }
+
+          page.drawImage(embeddedImage, {
+            x: targetX,
+            y: targetY,
+            width: imgWidth,
+            height: imgHeight,
+            rotate: degrees(rotDegrees) 
+          });
         }
-
-        const embeddedFont = await pdfDoc.embedFont(fontName);
-
-        page.drawText(ann.text, {
-          x: targetX,
-          y: targetY,
-          size: ann.fontSize, 
-          font: embeddedFont,
-          color: rgb(0, 0, 0), 
-        });
       }
 
       const pdfBytes = await pdfDoc.save();
@@ -193,7 +328,7 @@ export function PdfEditorManager({ currentFile, pages, onCancel, onError }: PdfE
       const link = document.createElement('a');
       link.href = url;
       const baseName = currentFile.name.substring(0, currentFile.name.lastIndexOf('.')) || currentFile.name;
-      link.download = `${baseName}_preenchido.pdf`;
+      link.download = `${baseName}_assinado.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -201,7 +336,7 @@ export function PdfEditorManager({ currentFile, pages, onCancel, onError }: PdfE
       onCancel();
     } catch (err) {
       console.error(err);
-      onError('Falha técnica ao exportar o documento preenchido com estilos.');
+      onError('Falha técnica ao embutir elementos visuais e assinaturas no PDF.');
     } finally {
       setIsSaving(false);
       if (url) URL.revokeObjectURL(url);
@@ -212,172 +347,168 @@ export function PdfEditorManager({ currentFile, pages, onCancel, onError }: PdfE
     <div className="w-full max-w-7xl bg-[#111827]/40 border border-gray-800 rounded-2xl p-6 backdrop-blur-sm flex flex-col items-center animate-fade-in">
       {/* Barra de Ações Superior */}
       <div className="w-full flex flex-col lg:flex-row items-start lg:items-center justify-between border-b border-gray-800 pb-4 mb-6 gap-4">
-        <div>
-          <h2 className="text-lg font-bold text-white">Preenchimento de Formulário</h2>
-          <p className="text-xs text-[#00F0FF] font-medium">💡 Clique em "+ Adicionar Texto" na lateral para colocar novas palavras no PDF.</p>
-        </div>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-6 w-full lg:w-auto">
+          <div>
+            <h2 className="text-lg font-bold text-white">Preenchimento e Assinatura de Formulário</h2>
+            <div className="flex gap-3 mt-3">
+              <button 
+                onClick={handleAddTextClick}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition"
+              >
+                + Adicionar Texto
+              </button>
+              <button 
+                onClick={() => setIsSignatureModalOpen(true)}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold transition"
+              >
+                ✍️ Importar Assinatura Física
+              </button>
+            </div>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-3 self-center lg:self-auto">
-          <TextToolbar 
-            editorStyle={editorStyle}
-            onFontSizeChange={updateFontSize}
-            onFontFamilyChange={updateFontFamily}
-            onToggleBold={toggleBold}
-            onToggleItalic={toggleItalic}
-          />
-
-          {/* Controles de Zoom */}
-          <div className="flex items-center space-x-2 bg-[#0B0F19]/80 border border-gray-800 rounded-xl px-3 py-1.5 select-none text-white">
-            <button 
-              type="button"
-              onClick={() => setZoomScale(prev => Math.max(60, prev - 20))}
-              className="text-gray-400 hover:text-white font-bold text-sm px-2 cursor-pointer transition-colors"
-            >
-              ➖
-            </button>
-            <span className="text-xs font-mono text-gray-300 w-12 text-center">
-              {zoomScale}%
-            </span>
-            <button 
-              type="button"
-              onClick={() => setZoomScale(prev => Math.min(200, prev + 20))}
-              className="text-gray-400 hover:text-white font-bold text-sm px-2 cursor-pointer transition-colors"
-            >
-              ➕
-            </button>
+          <div className="flex items-center gap-2 bg-[#1f2937]/50 border border-gray-700 px-4 py-2 rounded-xl mt-2 sm:mt-8">
+            <span className="text-xs text-gray-400 font-medium whitespace-nowrap">🔍 Zoom: {zoomScale}%</span>
+            <input 
+              type="range" min="50" max="175" step="5" value={zoomScale}
+              onChange={(e) => setZoomScale(Number(e.target.value))}
+              className="w-28 h-1 accent-cyan-400 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+            />
           </div>
         </div>
-
-        <div className="flex space-x-3 self-end lg:self-auto">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={isSaving}
-            className="px-4 py-2 bg-gray-800 text-gray-300 rounded-xl hover:bg-gray-700 transition-colors text-xs font-semibold cursor-pointer"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            onClick={handleSaveEdition}
-            disabled={isSaving || annotations.length === 0}
-            className="px-4 py-2 bg-gradient-to-r from-[#00F0FF] to-[#9437FF] text-[#0B0F19] rounded-xl font-bold transition-opacity hover:opacity-90 disabled:opacity-40 text-xs cursor-pointer shadow-[0_0_15px_rgba(0,240,255,0.3)]"
-          >
-            {isSaving ? 'Processando...' : 'Concluir e Baixar'}
-          </button>
-        </div>
+        
+        <button
+          onClick={handleSaveEdition}
+          disabled={isSaving}
+          className="px-6 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold rounded-xl text-sm shadow-lg hover:brightness-110 transition disabled:opacity-50 lg:mt-8"
+        >
+          {isSaving ? 'Salvando Documento...' : 'Salvar e Baixar PDF'}
+        </button>
       </div>
 
-      <div className="w-full grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-        {/* Painel Lateral */}
-        <div className="bg-[#0B0F19]/60 border border-gray-800 rounded-xl p-4 h-fit max-h-[600px] overflow-y-auto flex flex-col gap-4">
-          {/* NOVO BOTÃO DE INSERÇÃO CONTROLADA */}
-          <button
-            type="button"
-            onClick={handleAddTextClick}
-            className="w-full py-2.5 px-4 bg-gradient-to-r from-[#00F0FF]/20 to-[#9437FF]/20 border border-[#00F0FF]/40 text-white rounded-xl font-bold hover:from-[#00F0FF]/30 hover:to-[#9437FF]/30 transition-all text-xs cursor-pointer shadow-[0_0_10px_rgba(0,240,255,0.1)] text-center"
+      {/* Área de Visualização */}
+      <div className="w-full flex flex-col gap-8 items-center overflow-auto max-h-[70vh] p-8 bg-[#0f172a]/30 border border-gray-800/60 rounded-xl">
+        {pages.map((_, idx) => (
+          <div
+            key={idx}
+            ref={(el) => { containerRefs.current[idx] = el; }}
+            onMouseMove={(e) => handlePageMove(e, idx)}
+            onMouseUp={handleInteractionEnd}
+            onMouseLeave={handleInteractionEnd}
+            className="relative border border-gray-700 shadow-2xl bg-white select-none max-w-full"
+            style={{ 
+              transform: `scale(${zoomScale / 100})`,
+              marginBottom: zoomScale > 100 ? `${(zoomScale - 100) * 6.5}px` : '0px', 
+              width: '100%',
+              maxWidth: '800px'
+            }}
           >
-            ➕ Adicionar Texto
-          </button>
+            <canvas ref={(el) => { canvasRefs.current[idx] = el; }} className="w-full h-auto block" />
 
-          <div className="h-px bg-gray-800 w-full" />
-
-          <h3 className="text-xs font-bold text-white uppercase tracking-wider">Campos Preenchidos</h3>
-          {annotations.length === 0 ? (
-            <p className="text-xs text-gray-500 italic">Nenhum campo inserido. Use o botão acima.</p>
-          ) : (
-            <div className="space-y-2">
-              {annotations.map((ann, i) => (
-                <div key={i} className={`p-2 rounded-lg border text-xs flex items-center justify-between ${activeAnnotationIdx === i ? 'border-[#00F0FF] bg-[#00F0FF]/5' : 'border-gray-800 bg-[#0B0F19]'}`}>
-                  <span className="text-gray-300 truncate max-w-[140px]" style={{ fontFamily: ann.fontFamily === 'TimesRoman' ? 'Times New Roman' : ann.fontFamily === 'Courier' ? 'Courier New' : 'Helvetica', fontWeight: ann.isBold ? 'bold' : 'normal', fontStyle: ann.isItalic ? 'italic' : 'normal' }}>
-                    {ann.text || <span className="text-gray-600 italic">Digitando...</span>}
-                  </span>
-                  <button type="button" onClick={() => removeAnnotation(i)} className="text-red-400 hover:text-red-300 ml-2 font-bold">✕</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Workspace de Visualização */}
-        <div className="lg:col-span-3 bg-[#090D16] border border-gray-800 rounded-xl p-6 min-h-[550px] max-h-[750px] overflow-auto flex flex-col items-center gap-6 custom-scrollbar shadow-inner">
-          {pages.map((pageSrc, idx) => (
-            <div 
-              key={idx} 
-              ref={el => { containerRefs.current[idx] = el; }} 
-              onMouseMove={(e) => handlePageMove(e, idx)}
-              onMouseLeave={handleDragEnd}
-              onMouseUp={handleDragEnd}
-              className="relative bg-white shadow-2xl rounded border border-gray-300 select-none transition-all duration-200"
-              style={{ width: `${(650 * zoomScale) / 100}px` }}
-            >
-              <span className="absolute top-3 left-3 bg-[#0B0F19]/90 text-white text-[10px] px-2 py-0.5 rounded-full font-bold z-20">
-                Página {idx + 1}
-              </span>
-
-              <canvas 
-                ref={el => { canvasRefs.current[idx] = el; }}
-                className="w-full h-auto rounded block"
-              />
-
-              {/* Mapeamento de Textos Dinâmicos */}
-              {annotations.filter(ann => ann.pageIndex === idx).map((ann, globalIdx) => {
-                const actualIndex = annotations.findIndex(item => item === ann);
-                const isFocused = activeAnnotationIdx === actualIndex;
-
+            {annotations
+              .map((ann, originalIdx) => ({ ann, originalIdx }))
+              .filter(({ ann }) => ann.pageIndex === idx)
+              .map(({ ann, originalIdx }) => {
+                const isSelected = activeAnnotationIdx === originalIdx;
+                
                 return (
                   <div
-                    key={globalIdx}
-                    className={`absolute z-30 flex items-center rounded pl-1 pr-1 py-0.5 transition-all duration-150
-                      ${isFocused ? 'bg-blue-50/90 border border-blue-400 shadow-md' : 'bg-transparent border border-transparent'}`}
-                    style={{ 
-                      left: `${ann.xPercentage}%`, 
+                    key={ann.id}
+                    onMouseDown={(e) => handleDragStart(e, originalIdx)}
+                    className={`absolute cursor-move rounded flex flex-col items-center group transition-shadow ${
+                      isSelected 
+                        ? 'border-2 border-dashed border-cyan-400 bg-cyan-500/5 shadow-[0_0_15px_rgba(34,211,238,0.25)]' 
+                        : 'border border-transparent hover:border-gray-400'
+                    }`}
+                    style={{
+                      left: `${ann.xPercentage}%`,
                       top: `${ann.yPercentage}%`,
-                      transform: 'translateY(-50%)' 
+                      transform: 'translate(-5px, -5px)',
+                      padding: '0px', 
+                      zIndex: isSelected ? 50 : 10,
                     }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveAnnotationIdx(actualIndex); 
-                    }} 
                   >
-                    {isFocused && (
-                      <div
-                        onMouseDown={(e) => handleDragStart(e, actualIndex)}
-                        className="cursor-grab active:cursor-grabbing text-xs mr-1 opacity-60 hover:opacity-100 select-none"
-                        title="Clique e arraste para mover"
-                      >
-                        🖐️
+                    {/* Alça de Rotação */}
+                    {ann.type === 'image' && isSelected && (
+                      <div className="absolute -top-10 flex flex-col items-center justify-center w-full pointer-events-none animate-fade-in">
+                        <div 
+                          onMouseDown={(e) => handleRotationStart(e, originalIdx)}
+                          className="w-5 h-5 bg-cyan-500 border-2 border-white rounded-full cursor-alias pointer-events-auto flex items-center justify-center shadow-lg hover:scale-110 active:bg-cyan-600 transition"
+                        >
+                          <span className="text-[9px] text-white font-bold select-none">↻</span>
+                        </div>
+                        <div className="w-[2px] h-4 bg-cyan-400" />
                       </div>
                     )}
 
-                    <input
-                      type="text"
-                      value={ann.text}
-                      autoFocus={isFocused}
-                      onChange={(e) => updateAnnotationText(actualIndex, e.target.value)}
-                      onBlur={() => {
-                        if (!isDragging) {
-                          setActiveAnnotationIdx(null);
-                        }
-                      }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                      placeholder={isFocused ? "Digitar..." : ""}
-                      className={`bg-transparent border-none text-black focus:outline-none min-w-[100px]
-                        ${!isFocused && ann.text.trim() === '' ? 'hidden' : 'block'}`}
-                      style={{
-                        fontSize: `${(ann.fontSize * zoomScale) / 100}px`,
-                        fontFamily: ann.fontFamily === 'TimesRoman' ? 'Times New Roman' : ann.fontFamily === 'Courier' ? 'Courier New' : 'Helvetica',
-                        fontWeight: ann.isBold ? 'bold' : 'normal',
-                        fontStyle: ann.isItalic ? 'italic' : 'normal'
-                      }}
-                    />
+                    {ann.type === 'text' ? (
+                      <input
+                        type="text"
+                        value={ann.text}
+                        placeholder="Digite aqui..."
+                        onChange={(e) => updateAnnotationText(originalIdx, e.target.value)}
+                        className="bg-transparent border-none outline-none text-black placeholder-gray-400 text-sm min-w-[120px] p-1"
+                        style={{
+                          fontFamily: ann.fontFamily,
+                          fontSize: `${ann.fontSize}px`,
+                          fontWeight: ann.isBold ? 'bold' : 'normal',
+                          fontStyle: ann.isItalic ? 'italic' : 'normal',
+                        }}
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center relative select-none">
+                        <img 
+                          src={ann.base64Png} 
+                          alt="Assinatura" 
+                          style={{ 
+                            width: ann.widthPercentage ? `${ann.widthPercentage * 7}px` : '150px', 
+                            height: 'auto', 
+                            display: 'block',
+                            transform: `rotate(${ann.rotation || 0}deg)`,
+                            transition: isRotating ? 'none' : 'transform 0.05s linear',
+                            transformOrigin: 'center center'
+                          }}
+                          draggable={false}
+                        />
+
+                        {/* Slider de Tamanho */}
+                        {isSelected && !isRotating && (
+                          <div 
+                            className="absolute -bottom-10 bg-gray-950/95 border border-gray-800 px-2 py-1 rounded-md shadow-xl flex items-center gap-1.5 z-50 text-white select-none animate-fade-in"
+                            onMouseDown={(e) => e.stopPropagation()} 
+                          >
+                            <span className="text-[9px] text-gray-400 font-mono">📐 Tamanho</span>
+                            <input 
+                              type="range" min="10" max="60" step="1" value={ann.widthPercentage || 20}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setAnnotations(prev => prev.map((item, i) => i === originalIdx ? { ...item, widthPercentage: val } : item));
+                              }}
+                              className="w-16 h-1 accent-emerald-400 bg-gray-800 rounded appearance-none cursor-pointer"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Botão de remoção rápida */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); removeAnnotation(originalIdx); }}
+                      className="absolute -top-3 -right-3 hidden group-hover:flex items-center justify-center w-5 h-5 bg-red-500 text-white rounded-full text-xs font-bold shadow-md hover:bg-red-600 transition"
+                    >
+                      &times;
+                    </button>
                   </div>
                 );
               })}
-            </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
+
+      <SignatureModal
+        isOpen={isSignatureModalOpen}
+        onClose={() => setIsSignatureModalOpen(false)}
+        onSignatureExtracted={handleSignatureExtracted}
+      />
     </div>
   );
 }
