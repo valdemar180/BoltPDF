@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { DropZone } from './components/DropZone';
 import { ToolsGrid } from './components/ToolsGrid';
@@ -10,6 +10,22 @@ import { usePdfRenderer } from './hooks/usePdfRenderer';
 import { useToolValidation } from './hooks/useToolValidation'; 
 import { PDFDocument } from 'pdf-lib';
 
+function Footer() {
+  return (
+    <footer className="w-full mt-auto pt-8 pb-6 border-t border-gray-800/20 z-10 flex flex-col items-center justify-center gap-1.5 text-center">
+      <div className="text-sm font-semibold tracking-wider text-gray-300 uppercase">
+        © Valdemar Oliveira
+      </div>
+      <div className="text-xs text-gray-500 font-medium tracking-wide">
+        20/05/2026
+      </div>
+      <div className="text-xs text-gray-500 font-medium tracking-wide">
+        Todos os direitos reservados
+      </div>
+    </footer>
+  );
+}
+
 function App() {
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [mergeFiles, setMergeFiles] = useState<File[]>([]); 
@@ -19,16 +35,35 @@ function App() {
   const [isEditing, setIsEditing] = useState(false); 
   const [activeTool, setActiveTool] = useState<string | null>(null);
 
+  // Registro de URLs criadas para limpeza centralizada contra vazamento de memória
+  const activeUrlsRef = useRef<string[]>([]);
+
   const { executeImageToPdf, isProcessing: isConverting, converterError } = useImageConverter();
   const { pages, isRendering, renderError, renderPdfPages, clearRenderedPages } = usePdfRenderer();
-
+  
   const { validateAction } = useToolValidation({
     currentFile,
     onError: setAppError
   });
 
-  const handleFileLoaded = useCallback((file: File | null) => {
-    if (!file) {
+  // Limpeza de URLs no desmonte do componente para proteção de memória RAM
+  useEffect(() => {
+    return () => {
+      activeUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  const trackAndRevokeUrl = (url: string) => {
+    activeUrlsRef.current.push(url);
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      activeUrlsRef.current = activeUrlsRef.current.filter(u => u !== url);
+    }, 60000);
+  };
+
+  // Corrigido para lidar nativamente com a carga em lote (Array de Arquivos)
+  const handleFilesLoaded = useCallback((files: File[]) => {
+    if (files.length === 0) {
       setCurrentFile(null);
       setMergeFiles([]);
       setAppError(null);
@@ -38,18 +73,31 @@ function App() {
     }
 
     const MAX_FILE_SIZE_BYTES = 30 * 1024 * 1024;
-    
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      setAppError("O arquivo excede o limite máximo permitido de 30 MB.");
-      setCurrentFile(null);
-      return;
+    const validFiles: File[] = [];
+    let hasOversizedFile = false;
+
+    files.forEach(file => {
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        hasOversizedFile = true;
+      } else {
+        validFiles.push(file);
+      }
+    });
+
+    if (hasOversizedFile) {
+      setAppError("Um ou mais arquivos excederam o limite máximo permitido de 30 MB e foram ignorados.");
+    } else {
+      setAppError(null);
     }
 
-    setAppError(null);
-    setActiveTool(null);
-    clearRenderedPages();
-    setCurrentFile(file);
-    setMergeFiles((prev) => [...prev, file]); 
+    if (validFiles.length > 0) {
+      clearRenderedPages();
+      setActiveTool(null);
+      // Define o último arquivo válido selecionado como o principal em exibição
+      setCurrentFile(validFiles[validFiles.length - 1]);
+      // Atualiza o estado da fila de uma única vez (atômico)
+      setMergeFiles((prev) => [...prev, ...validFiles]);
+    }
   }, [clearRenderedPages]);
 
   const handleRemoveFromQueue = useCallback((indexToRemove: number) => {
@@ -95,7 +143,6 @@ function App() {
     });
   }, [currentFile, renderPdfPages, validateAction]);
 
-  // GATILHO DA FEATURE DE ASSINATURA: Reutiliza o motor do Editor de forma transparente
   const handleSignSetupTrigger = useCallback(() => {
     validateAction("Assinar Documento", async () => {
       setActiveTool('editar'); 
@@ -111,25 +158,22 @@ function App() {
         setAppError("A ferramenta de mesclagem necessita de pelo menos 2 arquivos carregados.");
         return;
       }
-
       setIsMerging(true);
       setAppError(null);
       let url: string | null = null;
-
       try {
         const mergedPdf = await PDFDocument.create();
-
         for (const file of mergeFiles) {
           const arrayBuffer = await file.arrayBuffer();
           const sourceDoc = await PDFDocument.load(arrayBuffer);
           const copiedPages = await mergedPdf.copyPages(sourceDoc, sourceDoc.getPageIndices());
           copiedPages.forEach((page) => mergedPdf.addPage(page));
         }
-
+        
         const pdfBytes = await mergedPdf.save();
         const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
         url = URL.createObjectURL(blob);
-
+        
         const link = document.createElement('a');
         link.href = url;
         link.download = 'bolt_pdf_mesclado.pdf';
@@ -143,32 +187,27 @@ function App() {
       } catch (err) {
         setAppError('Falha crítica de engenharia ao mesclar os arquivos PDF.');
         console.error(err);
-      } finally {
+      } {
         setIsMerging(false);
-        if (url) {
-          setTimeout(() => URL.revokeObjectURL(url!), 60000);
-        }
+        if (url) trackAndRevokeUrl(url);
       }
     });
   }, [mergeFiles, validateAction]);
 
   const handleProcessDivision = useCallback(async (selectedPageNumbers: number[]) => {
     if (!currentFile) return;
-    
     const safeFileName = currentFile.name; 
     setIsSplitting(true);
     setAppError(null);
     let url: string | null = null;
-
     try {
       const arrayBuffer = await currentFile.arrayBuffer();
       const sourcePdf = await PDFDocument.load(arrayBuffer);
       const newPdf = await PDFDocument.create();
-
       const zeroBasedIndices = selectedPageNumbers.map(num => num - 1);
       const copiedPages = await newPdf.copyPages(sourcePdf, zeroBasedIndices);
       copiedPages.forEach((page) => newPdf.addPage(page));
-
+      
       const pdfBytes = await newPdf.save();
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
       url = URL.createObjectURL(blob);
@@ -180,7 +219,7 @@ function App() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
+
       setCurrentFile(null);
       setMergeFiles([]);
       setActiveTool(null);
@@ -190,9 +229,7 @@ function App() {
       console.error(err);
     } finally {
       setIsSplitting(false);
-      if (url) {
-        setTimeout(() => URL.revokeObjectURL(url!), 60000);
-      }
+      if (url) trackAndRevokeUrl(url);
     }
   }, [currentFile, clearRenderedPages]);
 
@@ -210,17 +247,17 @@ function App() {
   const activeError = appError || converterError || renderError;
 
   return (
-    <div className="min-h-screen bg-[#0B0F19] relative flex flex-col items-center justify-start py-24 px-4 overflow-y-auto">
+    <div className="min-h-screen bg-[#0B0F19] relative flex flex-col items-center justify-start pt-3 pb-4 px-4 overflow-y-auto">
       <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-[#00F0FF]/5 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-[#9437FF]/5 rounded-full blur-[140px] pointer-events-none" />
-
+      
       <Header />
-
-      <main className="w-full flex flex-col items-center justify-start z-10">
-        <h1 className="text-2xl font-black text-white mt-12 mb-6 tracking-wider uppercase text-center">
+      
+      <main className="w-full flex flex-col items-center justify-start z-10 mb-8">
+        <h1 className="text-2xl font-black text-white mt-2 mb-4 tracking-wider uppercase text-center">
           {showSelector ? 'Divisor de Páginas' : showEditor ? 'Editor de PDF' : 'Arrastar e Soltar'}
         </h1>
-
+        
         {showSelector ? (
           <PdfPageSelector
             pages={pages}
@@ -231,14 +268,22 @@ function App() {
         ) : showEditor ? (
           <PdfEditorManager
             currentFile={currentFile!}
-            pages={pages.map(page => typeof page === 'string' ? page : (page as any).dataUrl || (page as any).url || '')}
+            // Substituição segura do 'as any' com fallback tipado em tempo de execução
+            pages={pages.map(page => {
+              if (typeof page === 'string') return page;
+              if (page && typeof page === 'object') {
+                return (page as { dataUrl?: string; url?: string }).dataUrl || 
+                       (page as { dataUrl?: string; url?: string }).url || '';
+              }
+              return '';
+            })}
             onCancel={handleCancelAction}
             onError={setAppError}
           />
         ) : (
           <DropZone
-            onFileAccepted={handleFileLoaded}
-            currentFile={currentFile}
+            onFilesAccepted={handleFilesLoaded}
+            currentFiles={mergeFiles}
             error={activeError}
             isProcessing={globalProcessing}
           />
@@ -258,10 +303,12 @@ function App() {
           onSplit={handleSplitSetupTrigger}
           onMerge={handleMergeTrigger}
           onEdit={handleEditSetupTrigger}
-          onSign={handleSignSetupTrigger} // Acoplamento limpo do novo gatilho
+          onSign={handleSignSetupTrigger}
           isProcessing={globalProcessing}
         />
       </main>
+      
+      <Footer />
     </div>
   );
 }

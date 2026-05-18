@@ -1,6 +1,5 @@
 import React from 'react';
 
-// Declaração local da interface para blindar o arquivo contra erros de importação relativa
 export interface PdfEditorStyle {
   fontSize: number;
   fontFamily: string;
@@ -16,6 +15,15 @@ interface TextToolbarProps {
   onToggleItalic: () => void;
 }
 
+// Configurações estáticas extraídas do escopo do componente para evitar alocação repetida na memória RAM
+const FONT_OPTIONS = [
+  { value: 'Helvetica', label: 'Helvetica' },
+  { value: 'TimesRoman', label: 'Times New Roman' },
+  { value: 'Courier', label: 'Courier (Mono)' }
+];
+
+const SIZE_OPTIONS = [10, 12, 14, 16, 18, 20, 24, 28, 32];
+
 export function TextToolbar({
   editorStyle,
   onFontSizeChange,
@@ -23,14 +31,6 @@ export function TextToolbar({
   onToggleBold,
   onToggleItalic
 }: TextToolbarProps) {
-  const fontOptions = [
-    { value: 'Helvetica', label: 'Helvetica' },
-    { value: 'TimesRoman', label: 'Times New Roman' },
-    { value: 'Courier', label: 'Courier (Mono)' }
-  ];
-
-  const sizeOptions = [10, 12, 14, 16, 18, 20, 24, 28, 32];
-
   return (
     <div className="flex items-center space-x-3 bg-[#0B0F19]/80 border border-gray-800 rounded-xl px-3 py-1.5 select-none text-white">
       {/* Seletor de Tipo de Fonte */}
@@ -38,9 +38,10 @@ export function TextToolbar({
         <select
           value={editorStyle.fontFamily}
           onChange={(e) => onFontFamilyChange(e.target.value)}
+          aria-label="Selecionar família da fonte do texto"
           className="bg-[#111827] border border-gray-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-[#00F0FF] cursor-pointer"
         >
-          {fontOptions.map((font) => (
+          {FONT_OPTIONS.map((font) => (
             <option key={font.value} value={font.value}>{font.label}</option>
           ))}
         </select>
@@ -53,9 +54,10 @@ export function TextToolbar({
         <select
           value={editorStyle.fontSize}
           onChange={(e) => onFontSizeChange(Number(e.target.value))}
+          aria-label="Selecionar tamanho da fonte em pixels"
           className="bg-[#111827] border border-gray-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-[#00F0FF] cursor-pointer"
         >
-          {sizeOptions.map((size) => (
+          {SIZE_OPTIONS.map((size) => (
             <option key={size} value={size}>{size}px</option>
           ))}
         </select>
@@ -67,6 +69,8 @@ export function TextToolbar({
       <button
         type="button"
         onClick={onToggleBold}
+        aria-label="Alternar formatação em negrito"
+        aria-pressed={editorStyle.isBold}
         className={`p-1 w-7 h-7 rounded-lg text-xs font-bold transition-all border ${
           editorStyle.isBold 
             ? 'bg-[#00F0FF]/20 border-[#00F0FF] text-[#00F0FF]' 
@@ -80,6 +84,8 @@ export function TextToolbar({
       <button
         type="button"
         onClick={onToggleItalic}
+        aria-label="Alternar formatação em itálico"
+        aria-pressed={editorStyle.isItalic}
         className={`p-1 w-7 h-7 rounded-lg text-xs italic transition-all border ${
           editorStyle.isItalic 
             ? 'bg-[#00F0FF]/20 border-[#00F0FF] text-[#00F0FF]' 

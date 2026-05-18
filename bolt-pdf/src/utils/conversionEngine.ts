@@ -13,9 +13,13 @@ export async function convertImageToPdf(
   const pdfDoc = await PDFDocument.create();
   let embeddedImage;
 
-  if (mimeType === 'image/png') {
+  // Sanitização estrita e normalização para evitar quebras por variações de caixa alta/baixa
+  const normalizedMime = mimeType.trim().toLowerCase();
+
+  // Tratamento robusto cobrindo extensões não oficiais comuns no ecossistema web
+  if (normalizedMime === 'image/png') {
     embeddedImage = await pdfDoc.embedPng(imageBuffer);
-  } else if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+  } else if (normalizedMime === 'image/jpeg' || normalizedMime === 'image/jpg') {
     embeddedImage = await pdfDoc.embedJpg(imageBuffer);
   } else {
     throw new Error('Formato de imagem inválido. Use apenas PNG ou JPG/JPEG.');
@@ -25,15 +29,16 @@ export async function convertImageToPdf(
   const [a4Width, a4Height] = PageSizes.A4;
   const page = pdfDoc.addPage([a4Width, a4Height]);
 
-  // Calcula as proporções para ajustar a imagem dentro dos limites da folha A4
   const imageWidth = embeddedImage.width;
   const imageHeight = embeddedImage.height;
-  const scale = Math.min(a4Width / imageWidth, a4Height / imageHeight);
+  
+  // Otimização gráfica: Impede que imagens pequenas sofram upscale e fiquem pixelizadas no A4
+  const scale = Math.min(1.0, Math.min(a4Width / imageWidth, a4Height / imageHeight));
 
   const finalWidth = imageWidth * scale;
   const finalHeight = imageHeight * scale;
 
-  // Centraliza a imagem na folha caso ela seja menor que o espaço total do A4
+  // Centraliza a imagem na folha de forma simétrica com base no tamanho final calculado
   const xPosition = (a4Width - finalWidth) / 2;
   const yPosition = (a4Height - finalHeight) / 2;
 

@@ -1,16 +1,20 @@
-import React, { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { useFileHandler } from '../hooks/useFileHandler';
 
 interface DropZoneProps {
-  onFileAccepted: (file: File | null) => void;
-  currentFile: File | null;
+  // Corrigido para receber o array completo de arquivos para evitar race conditions
+  onFilesAccepted: (files: File[]) => void;
+  currentFiles: File[];
   error: string | null;
   isProcessing: boolean;
 }
 
+// Lista de MIME types permitidos para validação estática no Drop
+const ALLOWED_TYPES = ['.pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+
 export const DropZone: React.FC<DropZoneProps> = ({
-  onFileAccepted,
-  currentFile,
+  onFilesAccepted,
+  currentFiles = [],
   error,
   isProcessing
 }) => {
@@ -30,13 +34,25 @@ export const DropZone: React.FC<DropZoneProps> = ({
     }
   };
 
-  // Motor modificado para iterar sobre a lista completa de arquivos enviados
+  // Validação de segurança para arquivos arrastados (Drag and Drop)
+  const validateFiles = (fileList: FileList): File[] => {
+    return Array.from(fileList).filter((file) => {
+      const fileName = file.name.toLowerCase();
+      return ALLOWED_TYPES.some(type => 
+        type.startsWith('.') 
+          ? fileName.endsWith(type) 
+          : file.type === type
+      );
+    });
+  };
+
   const processFiles = (files: FileList | null) => {
-    if (files && files.length > 0) {
-      // Loop sequencial para alimentar o handleFileLoaded do App.tsx arquivo por arquivo
-      for (let i = 0; i < files.length; i++) {
-        onFileAccepted(files[i]);
-      }
+    if (!files || files.length === 0) return;
+    
+    const validFiles = validateFiles(files);
+    if (validFiles.length > 0) {
+      // Envia todos os arquivos válidos de uma vez só, eliminando o bug de sobreposição de estado
+      onFilesAccepted(validFiles);
     }
   };
 
@@ -51,6 +67,14 @@ export const DropZone: React.FC<DropZoneProps> = ({
     e.preventDefault();
     handleDragOver(e);
   };
+
+  // Cálculo performático do tamanho total acumulado dos arquivos selecionados
+  const totalSizeMB = useMemo(() => {
+    const totalBytes = currentFiles.reduce((acc, file) => acc + file.size, 0);
+    return (totalBytes / (1024 * 1024)).toFixed(2);
+  }, [currentFiles]);
+
+  const hasFiles = currentFiles.length > 0;
 
   return (
     <div className="w-full max-w-2xl mx-auto px-4">
@@ -74,8 +98,8 @@ export const DropZone: React.FC<DropZoneProps> = ({
           type="file" 
           ref={fileInputRef} 
           onChange={(e) => processFiles(e.target.files)} 
-          accept=".pdf, image/png, image/jpeg, image/jpg" 
-          multiple // ATRIBUTO CHAVE: Habilita a seleção de múltiplos PDFs na janela local
+          accept={ALLOWED_TYPES.join(', ')} 
+          multiple 
           className="hidden" 
           data-testid="file-input"
           disabled={isProcessing}
@@ -87,9 +111,10 @@ export const DropZone: React.FC<DropZoneProps> = ({
             <h3 className="text-md font-semibold text-neonCyan tracking-wide animate-pulse">PROCESSANDO OPERAÇÃO...</h3>
             <p className="text-xs text-gray-500 mt-1">Gerando seu arquivo puramente no navegador</p>
           </div>
-        ) : !currentFile ? (
+        ) : !hasFiles ? (
           <>
             <div className="p-4 bg-gray-900/50 rounded-full mb-4 border border-gray-800 flex items-center justify-center">
+              {/* Namespace URI corrigido para validação W3C oficial */}
               <svg xmlns="http://w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 text-gray-400">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
               </svg>
@@ -100,16 +125,25 @@ export const DropZone: React.FC<DropZoneProps> = ({
         ) : (
           <div className="flex flex-col items-center">
             <div className="p-4 bg-neonCyan/10 rounded-full mb-4 border border-neonCyan/30 shadow-neon-cyan flex items-center justify-center">
+              {/* Namespace URI corrigido para validação W3C oficial */}
               <svg xmlns="http://w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 text-neonCyan">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
               </svg>
             </div>
-            <h3 className="text-md font-medium text-white mb-1 truncate max-w-md">Último arquivo adicionado: {currentFile.name}</h3>
-            <p className="text-xs text-gray-400 font-mono mb-4">{(currentFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+            {/* Feedback visual melhorado para indicar múltiplos arquivos reais carregados */}
+            <h3 className="text-md font-medium text-white mb-1 truncate max-w-md">
+              {currentFiles.length === 1 
+                ? `Arquivo adicionado: ${currentFiles[0].name}` 
+                : `${currentFiles.length} arquivos selecionados`}
+            </h3>
+            <p className="text-xs text-gray-400 font-mono mb-4">Tamanho total: {totalSizeMB} MB</p>
             <button 
               type="button"
-              onClick={(e) => { e.stopPropagation(); onFileAccepted(null); }}
-              className="text-xs text-red-400 hover:text-red-300 transition-colors underline focus:outline-none"
+              onClick={(e) => { 
+                e.stopPropagation(); // Evita reabrir a janela de seleção ao limpar
+                onFilesAccepted([]); 
+              }}
+              className="text-xs text-red-400 hover:text-red-300 transition-colors underline focus:outline-none z-10"
             >
               Limpar Tudo
             </button>

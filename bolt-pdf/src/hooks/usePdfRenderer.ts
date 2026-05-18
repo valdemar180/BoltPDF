@@ -27,11 +27,10 @@ export const usePdfRenderer = () => {
       const arrayBuffer = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
       const pdf = await loadingTask.promise;
-      
-      const extractedPages: PdfPageThumbnail[] = [];
 
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        if (currentInstanceId !== renderInstanceIdRef.current) return;
+        // Validação de concorrência antes de iniciar o processamento pesado de cada página
+        if (currentInstanceId !== renderInstanceIdRef.current) break;
 
         const page = await pdf.getPage(pageNum);
         const viewport = page.getViewport({ scale: 0.35 });
@@ -48,22 +47,25 @@ export const usePdfRenderer = () => {
             viewport: viewport,
           };
 
-          // SOLUÇÃO DE COMPILAÇÃO UNIVERSAL: Cast direto na injeção do argumento para ignorar checagem estrita da biblioteca
           await page.render(renderContext as any).promise;
           
-          if (currentInstanceId !== renderInstanceIdRef.current) return;
+          if (currentInstanceId !== renderInstanceIdRef.current) {
+            // Limpeza explícita se o processo foi cancelado durante o render assíncrono
+            canvas.width = 0;
+            canvas.height = 0;
+            break;
+          }
 
           const dataUrl = canvas.toDataURL('image/png');
-          extractedPages.push({ pageNumber: pageNum, dataUrl });
+          
+          // Renderização Progressiva: Alimenta a interface página por página
+          setPages((prev) => [...prev, { pageNumber: pageNum, dataUrl }]);
 
-          // Desalocação forçada para prevenção de Memory Leak
+          // Desalocação e desvinculação completa do contexto gráfico contra estouro de RAM/GPU
+          context.clearRect(0, 0, canvas.width, canvas.height);
           canvas.width = 0;
           canvas.height = 0;
         }
-      }
-
-      if (currentInstanceId === renderInstanceIdRef.current) {
-        setPages(extractedPages);
       }
     } catch (err) {
       if (currentInstanceId === renderInstanceIdRef.current) {
@@ -71,6 +73,7 @@ export const usePdfRenderer = () => {
       }
       console.error(err);
     } finally {
+      // O bloco finally agora executa com segurança mesmo em cenários de quebra de loop ou cancelamentos
       if (currentInstanceId === renderInstanceIdRef.current) {
         setIsRendering(false);
       }
@@ -81,6 +84,7 @@ export const usePdfRenderer = () => {
     renderInstanceIdRef.current++;
     setPages([]);
     setRenderError(null);
+    setIsRendering(false); // Garante o destravamento completo do estado de loading
   }, []);
 
   return { pages, isRendering, renderError, renderPdfPages, clearRenderedPages };

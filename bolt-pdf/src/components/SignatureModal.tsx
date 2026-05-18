@@ -1,7 +1,6 @@
-import React, { useRef } from "react";
+import React, { useRef, useEffect } from "react";
 import { useSignatureHandler } from "../hooks/useSignatureHandler";
 
-// Contrato de comunicação claro e limpo com o componente pai (PdfEditorManager)
 interface SignatureModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -14,35 +13,78 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({
   onSignatureExtracted,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  
   const { signatureImage, isProcessing, error, processFile, clearSignature } = useSignatureHandler();
 
-  // Se o modal não estiver ativo na árvore de renderização, não gasta recursos de tela
+  // Gerenciamento global de acessibilidade (Teclado e Foco)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // Captura o foco para dentro do container do modal (Focus Trap inicial)
+    modalRef.current?.focus();
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  // Executa uma limpeza preventiva caso o modal seja fechado durante uma operação assíncrona
+  useEffect(() => {
+    if (!isOpen) {
+      clearSignature();
+    }
+  }, [isOpen, clearSignature]);
+
   if (!isOpen) return null;
 
+  // CORREÇÃO DEFINITIVA: Passa a lista de arquivos inteira (FileList) para casar com a assinatura do hook
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files && files.length > 0) {
-      processFile(files[0]);
+      processFile(files); 
     }
   };
 
   const handleConfirmSignature = () => {
     if (signatureImage) {
       onSignatureExtracted(signatureImage);
-      clearSignature(); // Reseta o estado local após exportar
-      onClose(); // Fecha o modal de forma limpa
+      clearSignature();
+      onClose();
     }
   };
 
   return (
-    <div style={styles.backdrop} onClick={onClose}>
-      {/* Impede que cliques dentro do modal fechem ele acidentalmente */}
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        
-        {/* Cabeçalho do Componente */}
+    <div 
+      style={styles.backdrop} 
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-sig-title"
+    >
+      <div 
+        ref={modalRef}
+        tabIndex={-1}
+        style={styles.modal} 
+        onClick={(e) => e.stopPropagation()}
+        className="focus:outline-none"
+      >
+        {/* Cabeçalho do Componente com Alinhamento Corrigido */}
         <div style={styles.header}>
-          <h3 style={styles.title}>Extrair Assinatura do Papel</h3>
-          <button style={styles.closeBtn} onClick={onClose} aria-label="Fechar">
+          <h3 id="modal-sig-title" style={styles.title}>Extrair Assinatura do Papel</h3>
+          <button 
+            type="button" 
+            style={styles.closeBtn} 
+            onClick={onClose} 
+            aria-label="Fechar modal"
+          >
             &times;
           </button>
         </div>
@@ -59,13 +101,14 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({
               <input
                 type="file"
                 accept="image/*"
-                capture="environment" // Em dispositivos móveis, abre a câmera traseira instantaneamente
+                capture="environment"
                 ref={fileInputRef}
                 onChange={handleFileChange}
                 style={{ display: "none" }}
               />
 
               <button 
+                type="button"
                 style={styles.primaryButton} 
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isProcessing}
@@ -74,38 +117,40 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({
               </button>
             </div>
           ) : (
-            /* Área de Preview da Assinatura Processada */
             <div style={styles.previewContainer}>
               <p style={styles.previewText}>Resultado da Extração (Fundo Transparente):</p>
               
-              {/* O padrão quadriculado ajuda o usuário a ver que o papel branco sumiu */}
               <div style={styles.checkerboardBackground}>
                 <img 
                   src={signatureImage} 
-                  alt="Assinatura Extraída" 
+                  alt="Preview da Assinatura Extraída" 
                   style={styles.previewImg} 
                 />
               </div>
 
               <div style={styles.buttonGroup}>
-                <button style={styles.secondaryButton} onClick={clearSignature}>
+                <button type="button" style={styles.secondaryButton} onClick={clearSignature}>
                   Tirar Outra Foto
                 </button>
-                <button style={styles.confirmButton} onClick={handleConfirmSignature}>
+                <button type="button" style={styles.confirmButton} onClick={handleConfirmSignature}>
                   Inserir no PDF
                 </button>
               </div>
             </div>
           )}
 
-          {error && <div style={styles.errorAlert}>{error}</div>}
+          {error && (
+            <div style={styles.errorAlert} role="alert">
+              {error}
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
-// Objeto de estilos Inline mapeado para manter o componente 100% autocontido
+// Objeto de Estilos Inline Estabilizados
 const styles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: "fixed",
@@ -120,7 +165,7 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 1000,
   },
   modal: {
-    backgroundColor: "#121214", // Combinando com o tema escuro do seu app BoltPDF
+    backgroundColor: "#121214",
     borderRadius: "8px",
     width: "90%",
     maxWidth: "500px",
@@ -130,7 +175,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: {
     display: "flex",
-    justifyContent: "between",
+    justifyContent: "space-between",
     alignItems: "center",
     padding: "16px",
     borderBottom: "1px solid #29292e",
@@ -186,7 +231,6 @@ const styles: Record<string, React.CSSProperties> = {
                       linear-gradient(45deg, transparent 75%, #29292e 75%), 
                       linear-gradient(-45deg, transparent 75%, #29292e 75%)`,
     backgroundSize: "20px 20px",
-    backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0px",
     borderRadius: "6px",
     display: "flex",
     justifyContent: "center",
@@ -206,7 +250,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: "8px",
   },
   primaryButton: {
-    backgroundColor: "#00b37e", // Verde padrão UI de conversão/ação positiva
+    backgroundColor: "#00b37e",
     color: "#fff",
     border: "none",
     padding: "12px 24px",

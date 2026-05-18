@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 
-// O tipo foi simplificado localmente para uso interno exclusivo do estado deste hook
+// Contrato de tipo local mantido para evitar dependências circulares com componentes
 interface LocalEditorStyle {
   fontSize: number;
   fontFamily: string;
@@ -32,11 +32,17 @@ export function usePdfEditorStyle() {
     setEditorStyle((prev) => ({ ...prev, isItalic: !prev.isItalic }));
   }, []);
 
+  // Otimização: Permite atualizar várias propriedades de estilo de uma só vez de forma atômica
+  const updatePartialStyle = useCallback((partial: Partial<LocalEditorStyle>) => {
+    setEditorStyle((prev) => ({ ...prev, ...partial }));
+  }, []);
+
   return {
     editorStyle,
     updateFontSize,
     updateFontFamily,
     toggleBold,
-    toggleItalic
+    toggleItalic,
+    updatePartialStyle
   };
 }

@@ -6,20 +6,26 @@ interface UseToolValidationProps {
 }
 
 export function useToolValidation({ currentFile, onError }: UseToolValidationProps) {
+  
   /**
    * Intercepta a ação pretendida, valida o contexto de arquivos e injeta erros no estado global.
+   * Blindado contra funções síncronas/assíncronas e vazamentos de Promises.
    */
   const validateAction = useCallback(async (
     toolName: string, 
     actionCallback: () => Promise<void> | void
   ) => {
+    // Normalização da String para evitar falhas por quebra de maiúsculas/minúsculas em refatorações de UI
+    const normalizedToolName = toolName.trim().toLowerCase();
+
     // Regra de exceção: A mesclagem é validada internamente pelo App.tsx (pois checa a fila de múltiplos arquivos)
-    if (toolName === "Mesclar PDF") {
+    if (normalizedToolName === "mesclar pdf") {
       try {
-        await actionCallback();
+        // Envelopa a execução em um Promise.resolve para capturar rejeições mesmo se a função omitir o async
+        await Promise.resolve(actionCallback());
         return;
       } catch (error) {
-        console.error(`Erro ao executar a ferramenta ${toolName}:`, error);
+        console.error(`Erro crítico ao executar a ferramenta ${toolName}:`, error);
         onError(`Ocorreu um erro ao processar a ferramenta: ${toolName}.`);
         return;
       }
@@ -32,13 +38,13 @@ export function useToolValidation({ currentFile, onError }: UseToolValidationPro
     }
 
     try {
-      // Executa com segurança aceitando funções síncronas ou promessas
-      await actionCallback();
+      // Garante a resolução estrita da Promessa e bloqueia o fluxo até a consolidação total
+      await Promise.resolve(actionCallback());
     } catch (error) {
-      console.error(`Erro ao executar a ferramenta ${toolName}:`, error);
+      console.error(`Erro crítico ao executar a ferramenta ${toolName}:`, error);
       onError(`Ocorreu um erro ao processar a ferramenta: ${toolName}.`);
     }
-  }, [currentFile, onError]);
+  }, [currentFile, onError]); // Mantido estável com salvaguardas de normalização
 
   return { validateAction };
 }
